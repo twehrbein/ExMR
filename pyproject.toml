@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exmr"
+version = "0.1.0"
+description = "ExMR: Extremity Motion Refinement for Monocular Human Motion Capture"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Tom Wehrbein" }, { name = "Bodo Rosenhahn" }]
+requires-python = ">=3.12"
+# torch/torchvision are installed separately (CUDA-specific index), see docs/INSTALL.md.
+# The full list of dependencies with the tested versions is in requirements.txt.
+dependencies = ["numpy", "safetensors"]
+
+[project.urls]
+Repository = "https://github.com/twehrbein/ExMR"
+
+[tool.setuptools.packages.find]
+include = ["exmr*"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["third_party"]  # upstream code (git submodules)
+
+[tool.ruff.lint]
+#   E, W = pycodestyle    F = pyflakes (unused imports / undefined names)
+#   I = isort    UP = pyupgrade    N = pep8-naming
+select = ["E", "F", "W", "I", "UP", "N"]
+
+# Rules disabled for PyTorch research conventions:
+#   E203  whitespace before ':'              (formatter compatibility)
+#   N806  non-lowercase local variable       (uppercase tensor dims: B, C, H, W, ...)
+#   N803  non-lowercase argument             (uppercase tensor shape params)
+#   N802  non-lowercase function name        (torch module conventions)
+#   N812  lowercase import as non-lowercase  (torch.nn.functional as F)
+ignore = ["E203", "N806", "N803", "N802", "N812"]

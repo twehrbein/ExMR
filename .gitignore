@@ -1,0 +1,17 @@
+# downloaded models, demo outputs and input videos
+checkpoints/
+outputs/
+*.mp4
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# tooling
+.ruff_cache/
+.vscode/
+.idea/

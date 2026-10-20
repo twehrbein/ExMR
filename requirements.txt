@@ -1,0 +1,48 @@
+# ExMR, on top of torch 2.8.0 / torchvision 0.23.0 (CUDA 12.8), see docs/INSTALL.md.
+# Versions are those the release was validated with; packages that affect numerics are pinned.
+
+# numerics, video and image IO
+numpy==2.3.5
+scipy==1.15.2
+opencv-python==4.11.0.86
+av==13.0.0
+imageio==2.34.1
+PyTurboJPEG
+safetensors==0.7.0
+einops==0.8.1
+tqdm
+
+# SMPL-X
+smplx==0.1.28
+
+# person tracking
+ultralytics==8.4.83
+lap
+
+# visual odometry (SimpleVO)
+pycolmap==3.11.1
+
+# RTMW keypoints: 1.24.4 is a CUDA 12 / cuDNN 9 build like torch's (newer releases use CUDA 13)
+onnxruntime-gpu==1.24.4
+
+# Sapiens2 keypoints
+pillow
+prettytable
+accelerate
+rich
+termcolor
+
+# HaMeR hand features (installed with --no-deps, see docs/INSTALL.md)
+pytorch-lightning
+omegaconf
+timm==0.9.12
+yacs==0.1.8
+pyrender==0.1.45
+trimesh==4.6.5
+
+# SAM 3D Body body features (git submodule)
+roma==1.5.6
+iopath==0.1.10
+braceexpand
+huggingface_hub
+matplotlib
