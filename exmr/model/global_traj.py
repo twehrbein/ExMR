@@ -1,4 +1,5 @@
-"""World-frame trajectory: gravity-view rollout and static-joint post-processing (from GVHMR)."""
+"""World-frame trajectory: gravity-view rollout and static-joint post-processing (from GVHMR),
+and putting the motion on the ground, optionally snapped to a flat ground (as in PRIMAL)."""
 
 import torch
 import torch.nn.functional as F
@@ -9,11 +10,18 @@ from exmr.geometry.rotation_conversions import (
     matrix_to_axis_angle,
     rotation_6d_to_matrix,
 )
-from exmr.geometry.smoothing import gaussian_smooth
+from exmr.geometry.smoothing import gaussian_smooth, moving_average_smooth
 from exmr.model.ik import CCDIK
 
 # joints with a static-contact prediction: [L_ankle, L_foot, R_ankle, R_foot, L_wrist, R_wrist]
 STATIC_JOINT_IDS = [7, 10, 8, 11, 20, 21]
+# snap_to_ground: some body part touches the ground at least this often (seconds), about the hang
+# time of a jump (as in PRIMAL, Zhang et al., arXiv 2503.17544)
+CONTACT_INTERVAL = 0.5
+# static_cam_transl: the world root may deviate this far (m) from the camera-frame root before
+# the slow part of the deviation (Gaussian smoothing, sigma in seconds) is removed
+CAMERA_DEAD_BAND = 0.25
+CAMERA_DRIFT_SIGMA = 2.0
 
 
 def rollout_global_params(global_orient_gv, local_transl_vel, global_orient_c, cam_angvel):
@@ -91,7 +99,7 @@ def rollout_global_params(global_orient_gv, local_transl_vel, global_orient_c, c
 def static_joint_transl(smplx_global, static_conf_logits, decoder):
     """Moving camera: correct the world translation so that joints predicted static stay put.
 
-    Returns the post-processed (B, L, 3) translation, with the lowest joint on the ground (y=0).
+    Returns the post-processed (B, L, 3) translation.
     """
     pred_w_j3d = decoder.fk(**smplx_global)  # (B, L, 22, 3)
     pred_j3d_static = pred_w_j3d.clone()[:, :, STATIC_JOINT_IDS]  # (B, L, J, 3)
@@ -112,62 +120,75 @@ def static_joint_transl(smplx_global, static_conf_logits, decoder):
     post_w_transl = torch.cumsum(torch.cat([pred_w_transl[:, :1], pred_w_disp_new], dim=1), dim=1)
     post_w_transl[..., 0] = gaussian_smooth(post_w_transl[..., 0], dim=-1)
     post_w_transl[..., 2] = gaussian_smooth(post_w_transl[..., 2], dim=-1)
-
-    # put the sequence on the ground (lowest joint over all frames at y=0)
-    post_w_j3d = pred_w_j3d - pred_w_transl.unsqueeze(-2) + post_w_transl.unsqueeze(-2)
-    ground_y = post_w_j3d[..., 1].flatten(-2).min(dim=-1)[0]  # (B,)
-    post_w_transl[..., 1] -= ground_y
     return post_w_transl
 
 
-def static_cam_transl(smplx_incam, smplx_global, static_conf_logits, decoder):
-    """Static camera: keep the world trajectory consistent with the camera-frame one and make
-    joints predicted static stay put. Returns the post-processed (B, L, 3) translation."""
-    B, L = smplx_incam["transl"].shape[:2]
-    assert B == 1
-    static_conf_logits = static_conf_logits.clone()[:, :-1]  # (B, L-1, J)
+def static_cam_transl(smplx_incam, smplx_global, static_conf_logits, decoder, fps):
+    """Static camera: the moving-camera correction (static_joint_transl), then the slow drift of
+    the world root away from the camera-frame root, which a static camera places in the world, is
+    removed where it exceeds CAMERA_DEAD_BAND. Returns the post-processed (B, L, 3) translation.
+    """
+    transl = static_joint_transl(smplx_global, static_conf_logits, decoder)
+    world_root = decoder.fk(**{**smplx_global, "transl": transl})[:, :, 0]  # (B, L, 3)
+    # the camera-frame root, smoothed as it could be noisy
+    smplx_incam = {**smplx_incam, "transl": gaussian_smooth(smplx_incam["transl"], 5, dim=-2)}
+    cam_root = decoder.fk(**smplx_incam)[:, :, 0]  # (B, L, 3)
 
-    pred_w_j3d = decoder.fk(**smplx_global)  # (B, L, 22, 3)
-    # smooth the camera-frame translation, as it could be noisy
-    smplx_incam = {**smplx_incam}
-    smplx_incam["transl"] = gaussian_smooth(smplx_incam["transl"], sigma=5, dim=-2)
-    pred_c_j3d = decoder.fk(**smplx_incam)  # (B, L, 22, 3)
+    # into the world with the camera-to-world rotation of the first frame, where both roots meet
+    R_c2w = (
+        axis_angle_to_matrix(smplx_global["global_orient"][:, 0])
+        @ axis_angle_to_matrix(smplx_incam["global_orient"][:, 0]).mT
+    )  # (B, 3, 3)
+    cam_root_in_w = torch.einsum("bij,blj->bli", R_c2w, cam_root - cam_root[:, :1])
+    cam_root_in_w = cam_root_in_w + world_root[:, :1]
 
-    # static camera-to-world transform from the first frame
-    R_gv = axis_angle_to_matrix(smplx_global["global_orient"][:, 0])  # (B, 3, 3)
-    R_c = axis_angle_to_matrix(smplx_incam["global_orient"][:, 0])  # (B, 3, 3)
-    R_c2w = R_gv @ R_c.mT  # (B, 3, 3)
-    t_c2w = pred_w_j3d[:, 0, 0] - torch.einsum("bij,bj->bi", R_c2w, pred_c_j3d[:, 0, 0])  # (B, 3)
-    T_c2w = kinematics.transform_mat(R_c2w, t_c2w)  # (B, 4, 4)
-    pred_c_j3d_in_w = kinematics.apply_T_on_points(pred_c_j3d, T_c2w[:, None])
+    # the slow part of the deviation, beyond the dead band (per axis)
+    drift = gaussian_smooth(world_root - cam_root_in_w, CAMERA_DRIFT_SIGMA * fps, dim=-2)
+    drift = drift.sign() * (drift.abs() - CAMERA_DEAD_BAND).clamp(min=0)
+    return transl - drift
 
-    # 1. pull the world root toward the camera-frame root where they deviate by > 25 cm
-    post_w_transl = smplx_global["transl"].clone()  # (B, L, 3)
-    post_w_j3d = pred_w_j3d.clone()  # (B, L, 22, 3)
-    cp_thr = torch.tensor([0.25, 0.25, 0.25]).to(post_w_j3d)
-    for i in range(1, L):
-        cp_diff = post_w_j3d[:, i, 0] - pred_c_j3d_in_w[:, i, 0]  # (B, 3)
-        cp_diff = cp_diff * ~((cp_diff > -cp_thr) * (cp_diff < cp_thr))
-        cp_diff[..., 1] = 0  # y is set by the ground below
-        cp_diff = torch.clamp(cp_diff, -0.02, 0.02)
-        post_w_transl[:, i:] -= cp_diff
-        post_w_j3d[:, i:] -= (cp_diff)[:, None, None]
 
-    # 2. make joints predicted static stay put (average displacement of confident ones)
-    pred_j3d_static = post_w_j3d[:, :, STATIC_JOINT_IDS]  # (B, L, J, 3)
-    pred_j_disp = pred_j3d_static[:, 1:] - pred_j3d_static[:, :-1]  # (B, L-1, J, 3)
-    static_label = static_conf_logits.sigmoid() > 0.8  # (B, L-1, J)
-    static_label_sum = torch.clamp_min(static_label.sum(-1, keepdim=True), 1)  # (B, L-1, 1)
-    pred_disp = (pred_j_disp * static_label[..., None]).sum(-2) / static_label_sum  # (B, L-1, 3)
-    pred_disp[:, :, 1] = 0  # do not modify y
-    correction = pred_disp.cumsum(dim=1)  # every frame gets all preceding corrections
-    post_w_transl[:, 1:] -= correction
-    post_w_j3d[:, 1:] -= correction[:, :, None]
+def lowest_vertex_height(smplx_global, body_model, chunk_size=256):
+    """Height (y) of the lowest SMPL-X mesh vertex in every frame, (B, L).
 
-    # put the sequence on the ground (lowest joint over all frames at y=0)
-    ground_y = post_w_j3d[..., 1].flatten(-2).min(dim=-1)[0]  # (B,)
-    post_w_transl[..., 1] -= ground_y
-    return post_w_transl
+    The mesh is computed in chunks of frames: all of a long video's would take gigabytes.
+    """
+    params = {k: v.flatten(0, 1) for k, v in smplx_global.items()}  # (B * L, D)
+    lowest = [
+        body_model(**{k: v[i : i + chunk_size] for k, v in params.items()})[..., 1].amin(dim=-1)
+        for i in range(0, len(params["transl"]), chunk_size)
+    ]
+    return torch.cat(lowest).view(smplx_global["transl"].shape[:2])
+
+
+def put_on_ground(smplx_global, body_model):
+    """Move the motion vertically so that the lowest mesh vertex over all frames is on the
+    ground (y=0). Returns the (B, L, 3) translation."""
+    ground = lowest_vertex_height(smplx_global, body_model).amin(dim=-1)  # (B,)
+    transl = smplx_global["transl"].clone()
+    transl[..., 1] -= ground[:, None]
+    return transl
+
+
+def snap_to_ground(smplx_global, body_model, fps, interval=CONTACT_INTERVAL):
+    """Flat ground and nothing to stand on: move the body vertically so that it touches the
+    ground (y=0) at least every `interval` seconds, which removes vertical drift.
+
+    The ground height at a frame is the lowest mesh vertex within the window of about `interval`
+    seconds around it (a sliding minimum), smoothed over the same window. Vertical motion within
+    the window is kept, e.g. jumps with a shorter flight; longer flights are pulled down.
+    Returns the (B, L, 3) translation.
+    """
+    lowest = lowest_vertex_height(smplx_global, body_model)  # (B, L)
+    L = lowest.shape[1]
+    k = min(2 * int(interval * fps / 2) + 1, L - 1 + L % 2)  # odd window size, at most L
+    ground = -F.max_pool1d(-lowest[:, None], k, stride=1)  # (B, 1, L - k + 1)
+    # at the sequence ends, the windows are shifted inward instead of cut off
+    ground = F.pad(ground, (k // 2, k // 2), mode="replicate")[:, 0]  # (B, L)
+    ground = moving_average_smooth(ground, window_size=k, dim=-1)
+    transl = smplx_global["transl"].clone()
+    transl[..., 1] -= ground
+    return transl
 
 
 def static_joint_ik(smplx_global, static_conf_logits, decoder):

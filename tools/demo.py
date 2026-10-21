@@ -70,6 +70,14 @@ def main():
         "makes the demo faster for them (fewer frames to process). The results then "
         "follow the frames of the resampled video. Skipped for ~30 fps videos.",
     )
+    parser.add_argument(
+        "--snap_to_ground",
+        action="store_true",
+        help="assume a single flat ground and nothing to stand on (no stairs, chairs, ...): the "
+        "body touches the ground at least every 0.5 s, so the world-frame motion is moved "
+        "vertically to stay on the ground. Removes vertical drift (the person seems to fly or "
+        "sink) in long videos; jumps with a longer flight are pulled down.",
+    )
     parser.add_argument("--no_render", action="store_true", help="only save the results")
     parser.add_argument("--keep_frames", action="store_true", help="keep the extracted frames")
     args = parser.parse_args()
@@ -101,6 +109,7 @@ def main():
         static_cam=args.static_cam,
         vo=settings["vo"],
         fps30=args.fps30,
+        snap_to_ground=args.snap_to_ground,
         render=not args.no_render,
         keep_frames=args.keep_frames,
     )

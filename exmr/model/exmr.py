@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from safetensors.torch import load_file
 
+from exmr.body_models.smplx_model import SmplxModel
 from exmr.geometry.camera import cliff_bbox_info, full_cam_transl, normalize_kp2d
 from exmr.geometry.rotation_conversions import (
     matrix_to_axis_angle,
@@ -42,6 +43,8 @@ class ExMR(nn.Module):
         self.foot_refiner = FootRefiner()
         self.hand_refiner = HandRefiner()
         self.decoder = Decoder(smplx_npz)
+        # the SMPL-X mesh, to put the world-frame motion on the ground
+        self.body_model = SmplxModel(smplx_npz)
         # camera angular velocity normalization (6D), loaded with the checkpoint
         self.register_buffer("cam_angvel_mean", torch.zeros(6))
         self.register_buffer("cam_angvel_std", torch.ones(6))
@@ -66,6 +69,8 @@ class ExMR(nn.Module):
         length=None,
         static_cam=False,
         postprocess=True,
+        snap_to_ground=False,
+        fps=30.0,
     ):
         """
         Args:
@@ -75,19 +80,33 @@ class ExMR(nn.Module):
             cam_angvel: (B, L, 6) camera angular velocity, see exmr.preprocessing
             body_feat: (B, L, 1024) SAM 3D Body image features
             hand_feat: (B, L, 2, 1024) HaMeR image features (left, right)
-            length: (B,) valid length of each sequence, default: all L frames
+            length: (B,) valid length of each sequence, default: all L frames. Padded sequences
+                (length < L) need postprocess=False and snap_to_ground=False: the world-frame
+                post-processing works on whole sequences, padding included
             static_cam: whether the camera is known to be static (better world trajectory)
-            postprocess: apply static-joint post-processing to the world-frame outputs
+            postprocess: apply static-joint post-processing to the world-frame outputs and put
+                them on the ground (the lowest mesh vertex over all frames at y=0)
+            snap_to_ground: the ground is flat and there is nothing to stand on: keep the
+                world-frame body on the ground (removes vertical drift), see
+                global_traj.snap_to_ground
+            fps: frame rate of the video, for the time windows of snap_to_ground and of the
+                static-camera drift correction
         Returns:
             dict with
               smplx_incam: SMPL-X parameters in the camera frame (each (B, L, D))
-              smplx_global: SMPL-X parameters in the gravity-aligned world frame (y up)
+              smplx_global: SMPL-X parameters in the gravity-aligned world frame (y up, ground
+                  at y=0 with postprocess or snap_to_ground)
               static_conf_logits: (B, L, 6) static-contact logits of
                   [L_ankle, L_foot, R_ankle, R_foot, L_wrist, R_wrist]
         """
         B, L = kp2d.shape[:2]
         if length is None:
             length = torch.full((B,), L, device=kp2d.device)
+        elif (postprocess or snap_to_ground) and bool((length < L).any()):
+            raise ValueError(
+                "the world-frame post-processing (postprocess, snap_to_ground) needs unpadded "
+                "sequences: run padded sequences one at a time, or with both disabled"
+            )
         obs = normalize_kp2d(kp2d, bbx_xys)
         cliffcam = cliff_bbox_info(bbx_xys, K_fullimg)
         cam_angvel_norm = (cam_angvel - self.cam_angvel_mean) / self.cam_angvel_std
@@ -155,15 +174,23 @@ class ExMR(nn.Module):
         if postprocess:
             if static_cam:
                 smplx_global["transl"] = global_traj.static_cam_transl(
-                    smplx_incam, smplx_global, static_conf_logits, self.decoder
+                    smplx_incam, smplx_global, static_conf_logits, self.decoder, fps
                 )
             else:
                 smplx_global["transl"] = global_traj.static_joint_transl(
                     smplx_global, static_conf_logits, self.decoder
                 )
+        # the snap: after the static-joint translation correction, which would cancel it where a
+        # joint is static, and before the IK, which then keeps static joints in place on the result
+        if snap_to_ground:
+            smplx_global["transl"] = global_traj.snap_to_ground(smplx_global, self.body_model, fps)
+        if postprocess:
             smplx_global["body_pose"] = global_traj.static_joint_ik(
                 smplx_global, static_conf_logits, self.decoder
             )
+            if not snap_to_ground:
+                # one shift for all frames, so after the IK: puts the final mesh on the ground
+                smplx_global["transl"] = global_traj.put_on_ground(smplx_global, self.body_model)
 
         return {
             "smplx_incam": smplx_incam,

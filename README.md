@@ -66,6 +66,11 @@ Other options:
   videos, so you may try it for videos far from 30 fps (e.g. 50 fps or more). For such videos it
   also makes the demo faster, since fewer frames are processed. The results then follow the
   frames of the resampled video.
+* `--snap_to_ground`: in long videos, the world-frame motion can drift vertically (the person
+  seems to fly or sink). If the scene has a single flat ground and nothing to stand on (no
+  stairs, chairs, ...), the body touches the ground at least every 0.5 s, about the hang time of
+  a jump; this option moves the world-frame motion vertically so that it does, as in
+  [PRIMAL](https://arxiv.org/abs/2503.17544). Jumps with a longer flight are pulled down.
 * `--no_render`: only save the results.
 
 Intermediate results are cached in `outputs/<video name>/cache/`, so rerunning the demo (e.g.

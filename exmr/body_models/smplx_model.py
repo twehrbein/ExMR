@@ -43,6 +43,11 @@ class SmplxModel(nn.Module):
                 )
             },  # fmt: skip
         )
+        # the model data comes from smplx_npz: keep it out of state_dict(), so that a module
+        # holding a SmplxModel (ExMR) loads its checkpoint without it
+        for module in self.model.modules():
+            for name, buffer in list(module.named_buffers(recurse=False)):
+                module.register_buffer(name, buffer, persistent=False)
         self.faces = torch.from_numpy(self.model.faces.astype("int64"))  # (20908, 3)
 
     @property

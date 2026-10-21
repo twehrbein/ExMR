@@ -37,6 +37,7 @@ class Options:
     static_cam: bool = False  # the camera is known to be static: no visual odometry
     vo: str = "simplevo"  # camera motion if not static_cam: "simplevo" or "dpvo" (optional)
     fps30: bool = False  # resample to 30 fps first (usually not needed; faster for e.g. 60 fps)
+    snap_to_ground: bool = False  # flat ground, nothing to stand on: no vertical drift
     render: bool = True
     keep_frames: bool = False  # keep the extracted JPEG frames
 
@@ -90,7 +91,7 @@ def run_video(video_path, output_dir, options=None, assets=None):
     data = _preprocess(video_path, frame_dir, num_frames, width, height, options, assets, cache)
 
     log.info("Running ExMR")
-    results = _run_model(data, options.static_cam, assets)
+    results = _run_model(data, options.static_cam, options.snap_to_ground, fps, assets)
     results["fps"] = fps
     _save_results(results, output_dir)
 
@@ -198,7 +199,7 @@ def _simplevo_rotations(video_path):
     return SimpleVO(progress=False)(video_path).numpy()
 
 
-def _run_model(data, static_cam, assets):
+def _run_model(data, static_cam, snap_to_ground, fps, assets):
     from exmr.model.exmr import ExMR
 
     model = ExMR.from_pretrained(assets.exmr, assets.smplx)
@@ -206,7 +207,7 @@ def _run_model(data, static_cam, assets):
         k: data[k][None].cuda()
         for k in ("kp2d", "bbx_xys", "K_fullimg", "cam_angvel", "body_feat", "hand_feat")
     }
-    out = model(**inputs, static_cam=static_cam)
+    out = model(**inputs, static_cam=static_cam, snap_to_ground=snap_to_ground, fps=fps)
     del model
     _free_gpu_memory()
     return {
