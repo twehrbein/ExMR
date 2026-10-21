@@ -10,7 +10,7 @@
 | `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane, seen by a static camera |
 | `<name>_incam_global.mp4` | both side by side (scaled down to at most 4096 pixels wide) |
 | `cache/` | cached preprocessing results (reused when the demo is run again with the same settings) |
-| `run.json` | the video and options of the run |
+| `run.json` | the video and options of the run (e.g. `smoothing`) |
 
 ## results.pt
 
@@ -22,8 +22,8 @@ For a video with `L` frames:
 
 | Key | Shape | Description |
 |---|---|---|
-| `smplx_incam` | dict | SMPL-X parameters in the camera frame (x right, y down, z forward) |
-| `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s) |
+| `smplx_incam` | dict | SMPL-X parameters in the camera frame (x right, y down, z forward); not smoothed over time unless `--smoothing both` |
+| `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s); smoothed over time unless `--smoothing none` |
 | `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (in contact) |
 | `K_fullimg` | `(L, 3, 3)` | camera intrinsics used (estimated from the image size) |
 | `bbx_xyxy` | `(L, 4)` | tracked bounding box of the person, `[x1, y1, x2, y2]` in pixels |

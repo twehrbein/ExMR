@@ -38,6 +38,7 @@ class Options:
     vo: str = "simplevo"  # camera motion if not static_cam: "simplevo" or "dpvo" (optional)
     fps30: bool = False  # resample to 30 fps first (usually not needed; faster for e.g. 60 fps)
     snap_to_ground: bool = False  # flat ground, nothing to stand on: no vertical drift
+    smoothing: str = "global"  # smooth the motion over time: "global" (world frame), "both", "none"
     render: bool = True
     keep_frames: bool = False  # keep the extracted JPEG frames
 
@@ -47,6 +48,7 @@ class Options:
             ("sapiens2_resolution", ["1024x768", "576x432", "448x336"]),
             ("detector", ["yolo11m", "yolo11x"]),
             ("vo", ["simplevo", "dpvo"]),
+            ("smoothing", ["global", "both", "none"]),
         ]:
             if getattr(self, name) not in choices:
                 raise ValueError(f"Options.{name} must be one of {choices}")
@@ -91,7 +93,7 @@ def run_video(video_path, output_dir, options=None, assets=None):
     data = _preprocess(video_path, frame_dir, num_frames, width, height, options, assets, cache)
 
     log.info("Running ExMR")
-    results = _run_model(data, options.static_cam, options.snap_to_ground, fps, assets)
+    results = _run_model(data, options, fps, assets)
     results["fps"] = fps
     _save_results(results, output_dir)
 
@@ -199,7 +201,7 @@ def _simplevo_rotations(video_path):
     return SimpleVO(progress=False)(video_path).numpy()
 
 
-def _run_model(data, static_cam, snap_to_ground, fps, assets):
+def _run_model(data, options, fps, assets):
     from exmr.model.exmr import ExMR
 
     model = ExMR.from_pretrained(assets.exmr, assets.smplx)
@@ -207,7 +209,14 @@ def _run_model(data, static_cam, snap_to_ground, fps, assets):
         k: data[k][None].cuda()
         for k in ("kp2d", "bbx_xys", "K_fullimg", "cam_angvel", "body_feat", "hand_feat")
     }
-    out = model(**inputs, static_cam=static_cam, snap_to_ground=snap_to_ground, fps=fps)
+    out = model(
+        **inputs,
+        static_cam=options.static_cam,
+        snap_to_ground=options.snap_to_ground,
+        smooth_incam=options.smoothing == "both",
+        smooth_global=options.smoothing != "none",
+        fps=fps,
+    )
     del model
     _free_gpu_memory()
     return {

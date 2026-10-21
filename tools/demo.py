@@ -78,6 +78,16 @@ def main():
         "vertically to stay on the ground. Removes vertical drift (the person seems to fly or "
         "sink) in long videos; jumps with a longer flight are pulled down.",
     )
+    parser.add_argument(
+        "--smoothing",
+        choices=["global", "both", "none"],
+        default="global",
+        help="temporal smoothing of the output motion (Gaussian, ~33 ms). global (default): the "
+        "world-frame motion (smplx_global, _global video) only; the camera-frame motion stays "
+        "raw, best aligned with the image. both: also the camera-frame motion (smplx_incam, "
+        "_incam video), smoother but following fast foot motion slightly less closely in the "
+        "image. none: the raw network output.",
+    )
     parser.add_argument("--no_render", action="store_true", help="only save the results")
     parser.add_argument("--keep_frames", action="store_true", help="keep the extracted frames")
     args = parser.parse_args()
@@ -101,7 +111,7 @@ def main():
     if args.static_cam:
         vo = "static camera"
     detector = settings["detector"].replace("yolo", "YOLO")
-    log.info(f"Mode {args.mode}: {detector}, {keypoints}, {vo}")
+    log.info(f"Mode {args.mode}: {detector}, {keypoints}, {vo}; smoothing: {args.smoothing}")
     options = Options(
         pose_backend=settings["pose_backend"],
         sapiens2_resolution=settings["sapiens2_resolution"],
@@ -110,6 +120,7 @@ def main():
         vo=settings["vo"],
         fps30=args.fps30,
         snap_to_ground=args.snap_to_ground,
+        smoothing=args.smoothing,
         render=not args.no_render,
         keep_frames=args.keep_frames,
     )

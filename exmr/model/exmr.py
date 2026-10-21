@@ -11,6 +11,7 @@ from exmr.geometry.rotation_conversions import (
     matrix_to_rotation_6d,
     rotation_6d_to_matrix,
 )
+from exmr.geometry.smoothing import gaussian_smooth, gaussian_smooth_rotations
 from exmr.model import global_traj
 from exmr.model.body_net import HAND_POSE, BodyNet
 from exmr.model.decoder import Decoder
@@ -22,11 +23,23 @@ SHOULDERS, ELBOWS, WRISTS = slice(16, 18), slice(18, 20), slice(20, 22)
 # the same joints in the 63-dim body_pose (axis-angle of joints 1..21)
 BODY_POSE_ANKLES, BODY_POSE_ELBOWS, BODY_POSE_WRISTS = slice(18, 24), slice(51, 57), slice(57, 63)
 FOOT_KP2D = slice(15, 23)  # ankles + 6 foot keypoints of the COCO-23 layout
+# temporal smoothing of the output motion: Gaussian sigma in seconds, one frame at 30 fps
+SMOOTHING_SIGMA = 1 / 30
 
 
 def _rot6d(rotmat):
     """(B, L, N, 3, 3) -> (B, L, N*6)"""
     return matrix_to_rotation_6d(rotmat).flatten(-2)
+
+
+def _smooth_motion(smplx_params, sigma):
+    """Gaussian smoothing over time (sigma in frames) of SMPL-X parameters, each (B, L, D):
+    the rotations on SO(3) and the translation (the shape is the same in all frames)."""
+    smoothed = dict(smplx_params)
+    for key in ("global_orient", "body_pose", "left_hand_pose", "right_hand_pose"):
+        smoothed[key] = gaussian_smooth_rotations(smplx_params[key], sigma, dim=-2)
+    smoothed["transl"] = gaussian_smooth(smplx_params["transl"], sigma, dim=-2)
+    return smoothed
 
 
 class ExMR(nn.Module):
@@ -70,6 +83,8 @@ class ExMR(nn.Module):
         static_cam=False,
         postprocess=True,
         snap_to_ground=False,
+        smooth_incam=False,
+        smooth_global=True,
         fps=30.0,
     ):
         """
@@ -81,16 +96,20 @@ class ExMR(nn.Module):
             body_feat: (B, L, 1024) SAM 3D Body image features
             hand_feat: (B, L, 2, 1024) HaMeR image features (left, right)
             length: (B,) valid length of each sequence, default: all L frames. Padded sequences
-                (length < L) need postprocess=False and snap_to_ground=False: the world-frame
-                post-processing works on whole sequences, padding included
+                (length < L) need postprocess, snap_to_ground, smooth_incam and smooth_global
+                False: they work on whole sequences, padding included
             static_cam: whether the camera is known to be static (better world trajectory)
             postprocess: apply static-joint post-processing to the world-frame outputs and put
                 them on the ground (the lowest mesh vertex over all frames at y=0)
             snap_to_ground: the ground is flat and there is nothing to stand on: keep the
                 world-frame body on the ground (removes vertical drift), see
                 global_traj.snap_to_ground
-            fps: frame rate of the video, for the time windows of snap_to_ground and of the
-                static-camera drift correction
+            smooth_incam: smooth the camera-frame motion over time (Gaussian, SMOOTHING_SIGMA);
+                smoother, but follows fast motion, e.g. of the feet, slightly less closely in
+                the image
+            smooth_global: smooth the world-frame motion over time (Gaussian, SMOOTHING_SIGMA)
+            fps: frame rate of the video, for the time windows of snap_to_ground, of the
+                static-camera drift correction and of the smoothing
         Returns:
             dict with
               smplx_incam: SMPL-X parameters in the camera frame (each (B, L, D))
@@ -102,10 +121,13 @@ class ExMR(nn.Module):
         B, L = kp2d.shape[:2]
         if length is None:
             length = torch.full((B,), L, device=kp2d.device)
-        elif (postprocess or snap_to_ground) and bool((length < L).any()):
+        elif any([postprocess, snap_to_ground, smooth_incam, smooth_global]) and bool(
+            (length < L).any()
+        ):
             raise ValueError(
-                "the world-frame post-processing (postprocess, snap_to_ground) needs unpadded "
-                "sequences: run padded sequences one at a time, or with both disabled"
+                "post-processing and smoothing (postprocess, snap_to_ground, smooth_incam, "
+                "smooth_global) need unpadded sequences: run padded sequences one at a time, or "
+                "with all of them disabled"
             )
         obs = normalize_kp2d(kp2d, bbx_xys)
         cliffcam = cliff_bbox_info(bbx_xys, K_fullimg)
@@ -188,9 +210,15 @@ class ExMR(nn.Module):
             smplx_global["body_pose"] = global_traj.static_joint_ik(
                 smplx_global, static_conf_logits, self.decoder
             )
-            if not snap_to_ground:
-                # one shift for all frames, so after the IK: puts the final mesh on the ground
-                smplx_global["transl"] = global_traj.put_on_ground(smplx_global, self.body_model)
+
+        # 5. temporal smoothing, after the IK so that it also smooths the IK's changes
+        if smooth_incam:
+            smplx_incam = _smooth_motion(smplx_incam, SMOOTHING_SIGMA * fps)
+        if smooth_global:
+            smplx_global = _smooth_motion(smplx_global, SMOOTHING_SIGMA * fps)
+        if postprocess and not snap_to_ground:
+            # one shift for all frames, so last: puts the final mesh on the ground
+            smplx_global["transl"] = global_traj.put_on_ground(smplx_global, self.body_model)
 
         return {
             "smplx_incam": smplx_incam,
