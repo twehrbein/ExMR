@@ -124,7 +124,8 @@ model files are read from `checkpoints/` (or `$EXMR_CHECKPOINT_DIR`).
 | Hand image features (HaMeR) | `exmr/preprocessing/hand_features.py` |
 | Camera rotations (SimpleVO or DPVO) | `exmr/preprocessing/visual_odometry.py` |
 | ExMR: initial whole-body estimate, then FootMR and HandMR | `exmr/model/exmr.py`, with `body_net.py` and `refiners.py` |
-| World-frame trajectory and static-joint post-processing | `exmr/model/global_traj.py` |
+| World-frame trajectory and post-processing (static joints, camera drift, ground contact, IK) | `exmr/model/global_traj.py` |
+| Temporal smoothing | `exmr/model/exmr.py`, `exmr/geometry/smoothing.py` |
 | Rendered videos | `exmr/vis/` |
 
 ## Citation
