@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "exmr"
-version = "0.1.2"
+version = "0.1.3"
 description = "ExMR: Extremity Motion Refinement for Monocular Human Motion Capture"
 readme = "README.md"
 license = { file = "LICENSE" }

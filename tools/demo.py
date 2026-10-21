@@ -11,8 +11,9 @@ Modes: person detector, 2D keypoints, camera motion (moving camera)
     accurate   YOLO11x, Sapiens2-1B 1024x768,  DPVO
 --detector, --pose_backend, --sapiens2_resolution and --vo override single parts.
 
-Writes results.pt / results.npz (SMPL-X parameters, see docs/OUTPUTS.md) and rendered videos
-to --output_dir (default: outputs/<video name>).
+Writes results.pt / results.npz (SMPL-X parameters, see docs/OUTPUTS.md), <video name>_amass.npz
+(the world-frame motion for Blender) and rendered videos to --output_dir (default:
+outputs/<video name>).
 """
 
 import argparse

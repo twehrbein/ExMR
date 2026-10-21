@@ -42,7 +42,9 @@ python tools/demo.py --video 3690649-hd_1906_1080_30fps.mp4 -s
 ```
 
 Results go to `outputs/<video name>/`: SMPL-X parameters in the camera and in a gravity-aligned
-world frame (`results.pt`, `results.npz`) and rendered videos, see [outputs](docs/OUTPUTS.md).
+world frame (`results.pt`, `results.npz`), the world-frame motion as an AMASS file that the SMPL-X
+Blender add-on imports (`<video name>_amass.npz`, see [Blender](docs/OUTPUTS.md#blender-and-amass))
+and rendered videos, see [outputs](docs/OUTPUTS.md).
 
 `--mode` trades speed for accuracy. Times are for the 37-second example video (1122 frames, `-s`)
 on an RTX 4090, including model loading and rendering:
@@ -126,6 +128,7 @@ model files are read from `checkpoints/` (or `$EXMR_CHECKPOINT_DIR`).
 | ExMR: initial whole-body estimate, then FootMR and HandMR | `exmr/model/exmr.py`, with `body_net.py` and `refiners.py` |
 | World-frame trajectory and post-processing (static joints, camera drift, ground contact, IK) | `exmr/model/global_traj.py` |
 | Temporal smoothing | `exmr/model/exmr.py`, `exmr/geometry/smoothing.py` |
+| Export for Blender (AMASS SMPL-X file) | `exmr/export.py` |
 | Rendered videos | `exmr/vis/` |
 
 ## Citation
