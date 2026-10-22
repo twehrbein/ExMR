@@ -13,6 +13,13 @@
 > [!NOTE]
 > This repository currently contains the demo code. Evaluation and training code will follow.
 
+## News
+
+- **[2026-10-22]** [v0.1.3](https://github.com/twehrbein/ExMR/releases/tag/v0.1.3): export for
+  Blender (AMASS SMPL-X file), `--snap_to_ground` and temporal smoothing.
+- **[2026-10-21]** Demo code and model weights released.
+- **[2026-10-20]** Paper on [arXiv](https://arxiv.org/abs/2610.26213).
+
 ## Overview
 
 Detailed hand and foot articulation is important for animation and motion analysis, yet remains
@@ -23,7 +30,10 @@ evidence to predict residual joint rotations for the extremities.
 
 ## Setup
 
-Please see [installation](docs/INSTALL.md) for details.
+Tested on Linux with an NVIDIA GPU (about 8 GB of GPU memory, driver >= 570 for CUDA 12.8).
+Request access to [SAM 3D Body](https://huggingface.co/facebook/sam-3d-body-dinov3) on Hugging Face
+first: its weights are gated and access is approved manually, which can take a while. Please see
+[installation](docs/INSTALL.md) for details.
 
 ## Quick Start
 
@@ -41,6 +51,8 @@ from Pexels (1906x1080, filmed with a static camera) and run
 python tools/demo.py --video 3690649-hd_1906_1080_30fps.mp4 -s
 ```
 
+![Demo output on the example video: SMPL-X in the camera view (left) and in the gravity-aligned world frame (right)](assets/demo.gif)
+
 Results go to `outputs/<video name>/`: SMPL-X parameters in the camera and in a gravity-aligned
 world frame (`results.pt`, `results.npz`), the world-frame motion as an AMASS file that the SMPL-X
 Blender add-on imports (`<video name>_amass.npz`, see [Blender](docs/OUTPUTS.md#blender-and-amass))
@@ -51,9 +63,9 @@ on an RTX 4090, including model loading and rendering:
 
 | `--mode` | Person detector | 2D keypoints | Camera motion (moving camera) | Time |
 |---|---|---|---|---:|
-| `fast` | YOLO11m | RTMW-x | SimpleVO | 1 min 9 s |
-| `balanced` (default) | YOLO11m | Sapiens2-1B 448x336 | SimpleVO | 1 min 23 s |
-| `accurate` | YOLO11x | Sapiens2-1B 1024x768 | DPVO | 3 min 22 s |
+| `fast` | YOLO11m | RTMW-x | SimpleVO | 1&nbsp;min&nbsp;9&nbsp;s |
+| `balanced` (default) | YOLO11m | Sapiens2-1B 448x336 | SimpleVO | 1&nbsp;min&nbsp;23&nbsp;s |
+| `accurate` | YOLO11x | Sapiens2-1B 1024x768 | DPVO | 3&nbsp;min&nbsp;22&nbsp;s |
 
 In our evaluation, Sapiens2-1B gives nearly the same accuracy at 448x336 and 1024x768; RTMW-x is
 slightly less accurate, mostly for the feet. With `-s` (static camera), no mode estimates camera

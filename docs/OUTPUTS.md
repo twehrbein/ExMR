@@ -26,7 +26,7 @@ For a video with `L` frames:
 | `smplx_incam` | dict | SMPL-X parameters in the camera frame (x right, y down, z forward); not smoothed over time unless `--smoothing both` |
 | `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s); smoothed over time unless `--smoothing none` |
 | `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (in contact) |
-| `K_fullimg` | `(L, 3, 3)` | camera intrinsics used (estimated from the image size) |
+| `K_fullimg` | <code>(L,&nbsp;3,&nbsp;3)</code> | camera intrinsics used (estimated from the image size) |
 | `bbx_xyxy` | `(L, 4)` | tracked bounding box of the person, `[x1, y1, x2, y2]` in pixels |
 | `fps` | float | frame rate of the processed video |
 
