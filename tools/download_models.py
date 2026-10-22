@@ -34,7 +34,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from exmr.assets import DEFAULT_CHECKPOINT_DIR, RTMW_SHA256  # noqa: E402
 
-EXMR_REPO, EXMR_REVISION = "twehrbein/ExMR", "1dd0d8c12ba61252f68430c38b78c83d782c815e"
+EXMR_REPO, EXMR_REVISION = "twehrbein/ExMR", "8debd2e34262fcc63384f7e04d39ca784b0aec21"
 SAPIENS2_REPO, SAPIENS2_REVISION = (
     "facebook/sapiens2-pose-1b",
     "f5fed8b97b99698d5eea1d14ff0855d0b4c3f000",
@@ -55,6 +55,7 @@ DPVO_URL = (
 
 SHA256 = {
     "exmr/exmr.safetensors": "8d3947310c30444ec59dae4662574d7a32bf83af30320eeac87146529ff2fda5",
+    "exmr/config.json": "b29ad86d7916a7f54154c1a20fb07d3bc9d794da4d671c88ba0cf75a5cec8c43",
     "body_models/smplx/SMPLX_NEUTRAL.npz": (
         "376021446ddc86e99acacd795182bbef903e61d33b76b9d8b359c2b0865bd992"
     ),
@@ -187,6 +188,8 @@ def _copy(src, dst, total, desc):
 
 def fetch_exmr(d, args):
     d.hf(EXMR_REPO, EXMR_REVISION, "exmr.safetensors", "exmr/exmr.safetensors")
+    # not needed to run ExMR; the Hugging Face Hub counts the downloads of this file
+    d.hf(EXMR_REPO, EXMR_REVISION, "config.json", "exmr/config.json")
 
 
 def fetch_rtmw(d, args):
