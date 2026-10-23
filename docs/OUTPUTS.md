@@ -202,7 +202,10 @@ python scripts/smplx_to_robot.py --smplx_file <name>_amass.npz --robot unitree_g
   world-frame motion lets the robot float or sink.
 - GMR treats motions below 30 fps as 30 fps motions without resampling them, so e.g. a 25 fps
   motion plays too fast. For videos below 30 fps, run ExMR with `--fps30`.
-- GMR retargets the body only and ignores the finger motion, also for robots with hands.
+- GMR retargets the body only and ignores the finger motion, also for robots with hands. For robot
+  hands, the [joints](#joints) contain per hand the wrist, the three finger joints and the
+  fingertip of every finger: the 21 hand keypoints (in another order) that hand retargeting tools
+  such as [dex-retargeting](https://github.com/dexsuite/dex-retargeting) take.
 - Sudden robot arm motions that the SMPL-X mesh does not show come from the retargeting: GMR
   solves every frame on its own and can switch the robot's arm between joint configurations that
   reach the same pose. The same happens with ground-truth motion.
