@@ -39,6 +39,7 @@ class Options:
     vo: str = "simplevo"  # camera motion if not static_cam: "simplevo" or "dpvo" (optional)
     start: float | None = None  # only the part of the video from this time on (seconds)
     end: float | None = None  # ... up to this time (seconds; None: to its end)
+    f_mm: float | None = None  # the camera's focal length (mm, full-frame equivalent), if known
     fps30: bool = False  # resample to 30 fps first (usually not needed; faster for e.g. 60 fps)
     snap_to_ground: bool = False  # flat ground, nothing to stand on: no vertical drift
     smoothing: str = "global"  # smooth the motion over time: "global" (world frame), "both", "none"
@@ -59,6 +60,8 @@ class Options:
             raise ValueError("Options.start must be >= 0")
         if self.end is not None and self.end <= (self.start or 0):
             raise ValueError("Options.end must be after Options.start")
+        if self.f_mm is not None and self.f_mm <= 0:
+            raise ValueError("Options.f_mm must be > 0")
 
 
 def run_video(video_path, output_dir, options=None, assets=None):
@@ -171,7 +174,12 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
     if backend == "sapiens2":
         kp_settings["resolution"] = options.sapiens2_resolution
     vo_cache = cache / "camera_rotations.pt"
-    vo_settings = {"video": str(video_path), "frames": L, "odometry": options.vo}
+    vo_settings = {
+        "video": str(video_path),
+        "frames": L,
+        "odometry": options.vo,
+        "f_mm": options.f_mm,
+    }
 
     # SimpleVO needs only the video and the CPU: it runs in a separate process while the GPU
     # stages below run
@@ -179,7 +187,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
     use_simplevo = options.vo == "simplevo" and not options.static_cam
     if use_simplevo and not _is_cached(vo_cache, vo_settings):
         log.info("Starting visual odometry in the background")
-        simplevo = _in_background(_simplevo_rotations, video_path)
+        simplevo = _in_background(_simplevo_rotations, video_path, options.f_mm)
 
     def track():
         from exmr.preprocessing.tracker import Tracker
@@ -188,7 +196,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
 
     bbx_xyxy = _cached(cache / "tracks.pt", tracker_settings, track)  # (L, 4)
     bbx_xys = bbx_xys_from_xyxy(bbx_xyxy, base_enlarge=1.2).float()  # (L, 3)
-    K = estimate_K(width, height)[None].repeat(L, 1, 1)  # (L, 3, 3)
+    K = estimate_K(width, height, options.f_mm)[None].repeat(L, 1, 1)  # (L, 3, 3)
 
     threshold = VISIBILITY_THRESHOLD[backend]
 
@@ -207,7 +215,8 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
 
         return SamBodyFeatures(assets.sam_3d_body)(frame_dir, bbx_xyxy, K)
 
-    body_feat = _cached(cache / "body_features.pt", tracker_settings, body_features)
+    body_settings = {**tracker_settings, "f_mm": options.f_mm}
+    body_feat = _cached(cache / "body_features.pt", body_settings, body_features)
 
     def hand_features():
         from exmr.preprocessing.hand_features import HamerHandFeatures, hand_boxes_from_keypoints
@@ -251,12 +260,14 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
     }
 
 
-def _simplevo_rotations(video_path):
+def _simplevo_rotations(video_path, f_mm=None):
     """SimpleVO's (L, 3, 3) camera rotations, as a numpy array: torch tensors would be returned
-    from the separate process through shared memory."""
+    from the separate process through shared memory. f_mm: the focal length (SimpleVO's default
+    if None)."""
     from exmr.preprocessing.visual_odometry import SimpleVO
 
-    return SimpleVO(progress=False)(video_path).numpy()
+    vo = SimpleVO(progress=False) if f_mm is None else SimpleVO(f_mm=f_mm, progress=False)
+    return vo(video_path).numpy()
 
 
 def _run_model(data, options, fps, assets):

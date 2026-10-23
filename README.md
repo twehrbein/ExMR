@@ -84,6 +84,10 @@ Other options:
 * `--start`, `--end`: only the part of the video between these times, in seconds (`83.5`) or as
   in a video player (`1:23.5`, `1:02:03`); either can be left out. The outputs go to
   `outputs/<video name>_<start>-<end>s/` and cover only that part (see [outputs](docs/OUTPUTS.md)).
+* `--f_mm`: the camera's focal length in mm as for a full-frame camera (35 mm equivalent), if you
+  know it; for phones about 13 (0.5x lens), 24-26 (1x), 48 (2x) or 77 (3x). Without it, ExMR assumes
+  a 53° diagonal field of view (about 43 mm). The focal
+  length is used by the model, SAM 3D Body and the camera motion estimation.
 * `--fps30`: resample the video to 30 fps first. Usually not needed; ExMR is trained on 30 fps
   videos, so you may try it for videos far from 30 fps (e.g. 50 fps or more). For such videos it
   also makes the demo faster, since fewer frames are processed. The results then follow the

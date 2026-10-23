@@ -45,7 +45,7 @@ For a video with `L` frames:
 | `joints_2d` | <code>(L,&nbsp;76,&nbsp;2)</code> | `joints_incam` projected into the image with `K_fullimg`, in pixels |
 | `joint_names` | 76 | names of the joints, e.g. `left_heel` |
 | `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (in contact) |
-| `K_fullimg` | <code>(L,&nbsp;3,&nbsp;3)</code> | camera intrinsics used (estimated from the image size) |
+| `K_fullimg` | <code>(L,&nbsp;3,&nbsp;3)</code> | camera intrinsics used (from `--f_mm`, else estimated from the image size) |
 | `bbx_xyxy` | `(L, 4)` | tracked bounding box of the person, `[x1, y1, x2, y2]` in pixels |
 | `fps` | float | frame rate of the processed video |
 

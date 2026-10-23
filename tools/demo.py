@@ -73,6 +73,13 @@ def main():
         help="camera motion estimation for a moving camera (DPVO is an optional install)",
     )
     parser.add_argument(
+        "--f_mm",
+        type=float,
+        help="the camera's focal length in mm as for a full-frame camera (35 mm equivalent), if "
+        "known; e.g. phones: about 13 (0.5x lens), 24-26 (1x), 48 (2x), 77 (3x). Default: a 53 "
+        "degree field of view (about 43 mm)",
+    )
+    parser.add_argument(
         "--fps30",
         action="store_true",
         help="resample the video to 30 fps first; usually not needed. ExMR is trained on 30 fps "
@@ -118,6 +125,8 @@ def main():
         parser.error(f"video not found: {args.video}")
     if args.end is not None and args.end <= (args.start or 0):
         parser.error("--end must be after --start")
+    if args.f_mm is not None and args.f_mm <= 0:
+        parser.error("--f_mm must be > 0")
     # the preset, with the explicitly given parts replaced
     settings = {k: getattr(args, k) or v for k, v in PRESETS[args.mode].items()}
     keypoints = (
@@ -130,6 +139,8 @@ def main():
         vo = "static camera"
     detector = settings["detector"].replace("yolo", "YOLO")
     log.info(f"Mode {args.mode}: {detector}, {keypoints}, {vo}; smoothing: {args.smoothing}")
+    if args.f_mm is not None:
+        log.info(f"Focal length {args.f_mm:g} mm (full-frame equivalent)")
     options = Options(
         pose_backend=settings["pose_backend"],
         sapiens2_resolution=settings["sapiens2_resolution"],
@@ -138,6 +149,7 @@ def main():
         vo=settings["vo"],
         start=args.start,
         end=args.end,
+        f_mm=args.f_mm,
         fps30=args.fps30,
         snap_to_ground=args.snap_to_ground,
         smoothing=args.smoothing,

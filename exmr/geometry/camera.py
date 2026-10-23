@@ -5,10 +5,13 @@ import torch
 from exmr.geometry.rotation_conversions import matrix_to_rotation_6d
 
 
-def estimate_K(img_w, img_h):
-    """Default intrinsics for an unknown camera: principal point at the image center, focal
-    length = image diagonal (53 degrees diagonal field of view)."""
+def estimate_K(img_w, img_h, f_mm=None):
+    """Intrinsics with the principal point at the image center. The focal length is f_mm, that of
+    a full-frame (36x24 mm) camera in mm, scaled from the full-frame diagonal to the image's; for
+    an unknown camera (f_mm None) the image diagonal (53 degrees diagonal field of view, ~43 mm)."""
     focal_length = (img_w**2 + img_h**2) ** 0.5
+    if f_mm is not None:
+        focal_length = focal_length / (24**2 + 36**2) ** 0.5 * f_mm
     K = torch.eye(3).float()
     K[0, 0] = focal_length
     K[1, 1] = focal_length
