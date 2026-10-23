@@ -1,5 +1,5 @@
-"""Export of the world-frame motion as an AMASS SMPL-X file, e.g. for the SMPL-X Blender add-on
-(see docs/OUTPUTS.md)."""
+"""Export of the world-frame motion as an AMASS SMPL-X file, e.g. for the SMPL-X Blender add-on or
+for retargeting to humanoid robots with GMR (see docs/OUTPUTS.md)."""
 
 import numpy as np
 import torch
@@ -9,6 +9,9 @@ from exmr.geometry.rotation_conversions import axis_angle_to_matrix, matrix_to_a
 
 # ExMR's world frame is y-up, AMASS's z-up: +90 degrees about x
 Y_UP_TO_Z_UP = torch.tensor([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=torch.float64)
+# AMASS SMPL-X files have 16 betas, and loaders such as GMR's build the body model with as many:
+# ExMR's 10 betas are padded with zeros (the same body shape)
+AMASS_NUM_BETAS = 16
 
 
 def save_amass(smplx_params, fps, path, smplx_npz):
@@ -41,8 +44,8 @@ def save_amass(smplx_params, fps, path, smplx_npz):
         poses=torch.cat(list(parts.values()), dim=-1).numpy(),  # (L, 165): the 55 SMPL-X joints
         **{k: v.numpy() for k, v in parts.items()},
         trans=trans.numpy(),
-        betas=betas.numpy(),
-        num_betas=len(betas),
+        betas=np.pad(betas.numpy(), (0, AMASS_NUM_BETAS - len(betas))),
+        num_betas=AMASS_NUM_BETAS,
         gender="neutral",
         surface_model_type="smplx",
         # rounded: the SMPL-X Blender add-on cuts the rate to an integer (29.97 -> 29) and rejects

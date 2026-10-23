@@ -6,7 +6,7 @@
 |---|---|
 | `results.pt` | reconstruction (PyTorch, see below) |
 | `results.npz` | the same as NumPy arrays, with flattened keys (`smplx_incam_body_pose`, ...) |
-| `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for Blender, see [below](#blender-and-amass) |
+| `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for [Blender](#blender-and-amass) or [humanoid robots](#humanoid-robots-gmr) |
 | `<name>_incam.mp4` | SMPL-X mesh rendered over the input video |
 | `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane, seen by a static camera |
 | `<name>_incam_global.mp4` | both side by side (scaled down to at most 4096 pixels wide) |
@@ -86,7 +86,7 @@ hand poses are relative to the flat hand, as in `results.pt`.
 | `poses` | `(L, 165)` | axis-angle rotations of the 55 SMPL-X joints: root, 21 body joints, jaw, 2 eyes, 15 + 15 finger joints (jaw and eyes are zero) |
 | `root_orient`, `pose_body`, `pose_jaw`, `pose_eye`, `pose_hand` | `(L, 3)`, `(L, 63)`, `(L, 3)`, `(L, 6)`, `(L, 90)` | the same, split into parts |
 | `trans` | `(L, 3)` | root translation in meters |
-| `betas` | `(10,)` | body shape (`num_betas`: 10) |
+| `betas` | `(16,)` | body shape: ExMR's 10 betas, padded with zeros to the 16 of AMASS (`num_betas`: 16) |
 | `gender`, `surface_model_type` | | `neutral`, `smplx` |
 | `mocap_frame_rate` | | frame rate, rounded to an integer (the Blender add-on reads it as one); the exact rate is `fps` in `results.pt` |
 
@@ -98,3 +98,28 @@ from exmr.export import save_amass
 
 save_amass(results["smplx_global"], results["fps"], "motion_amass.npz", "SMPLX_NEUTRAL.npz")
 ```
+
+## Humanoid robots (GMR)
+
+[GMR](https://github.com/YanjieZe/GMR) (General Motion Retargeting) retargets AMASS SMPL-X files
+to humanoid robots, e.g. the Unitree G1 and H1, Booster T1 or Fourier N1 (see its list).
+
+![The example video (left) and its ExMR motion (with --snap_to_ground) retargeted to a Unitree G1 by GMR (right)](../assets/robot_g1.gif)
+
+Install GMR as described in its README, put ExMR's `checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz`
+into GMR's `assets/body_models/smplx/` and run, in the GMR repository:
+
+```bash
+python scripts/smplx_to_robot.py --smplx_file <name>_amass.npz --robot unitree_g1 \
+    --save_path <name>_unitree_g1.pkl --rate_limit
+```
+
+- The robot keeps the height of the motion above the ground, so run ExMR with `--snap_to_ground`
+  if the scene allows it (see the [README](../README.md)): otherwise vertical drift of the
+  world-frame motion lets the robot float or sink.
+- GMR treats motions below 30 fps as 30 fps motions without resampling them, so e.g. a 25 fps
+  motion plays too fast. For videos below 30 fps, run ExMR with `--fps30`.
+- GMR retargets the body only and ignores the finger motion, also for robots with hands.
+- Sudden robot arm motions that the SMPL-X mesh does not show come from the retargeting: GMR
+  solves every frame on its own and can switch the robot's arm between joint configurations that
+  reach the same pose. The same happens with ground-truth motion.
