@@ -29,7 +29,8 @@ conda activate exmr
 
 pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 conda install -y -c conda-forge ffmpeg=7.1.1 libjpeg-turbo
-pip install -r requirements.txt
+# constraints.txt pins the indirect dependencies too, to the validated versions
+pip install -r requirements.txt -c constraints.txt
 # HaMeR and Sapiens2 at the evaluated versions, without their (training) dependencies
 # (`pip check` lists those as missing; they are not needed)
 pip install --no-deps \
@@ -95,7 +96,7 @@ git -C third_party/DPVO apply ../patches/DPVO-torch2.7.patch  # build fix for to
 wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 unzip eigen-3.4.0.zip -d third_party/DPVO/thirdparty && rm eigen-3.4.0.zip
 pip install torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.8.0+cu128.html \
-    numba==0.68.0 pypose==0.7.2
+    numba==0.68.0 pypose==0.7.2 -c constraints.txt
 CUDA_HOME=$CONDA_PREFIX pip install --no-build-isolation --no-deps -e third_party/DPVO
 ```
 
