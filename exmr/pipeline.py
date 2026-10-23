@@ -67,6 +67,14 @@ def run_video(video_path, output_dir, options=None, assets=None):
             "DPVO is not installed: see the optional DPVO section of docs/INSTALL.md, or use "
             "SimpleVO (--vo simplevo)"
         )
+    from exmr.preprocessing.body_features import SAM_3D_BODY_ROOT
+
+    submodule = (SAM_3D_BODY_ROOT / "sam_3d_body").is_dir()
+    if not submodule and importlib.util.find_spec("sam_3d_body") is None:
+        raise RuntimeError(
+            "SAM 3D Body's code (the git submodule third_party/sam-3d-body) is missing, as the "
+            "repository was cloned without --recursive: run git submodule update --init"
+        )
     if options.render:
         _check_renderer()
     video_path, output_dir = Path(video_path), Path(output_dir)
