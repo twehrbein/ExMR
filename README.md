@@ -53,10 +53,15 @@ python tools/demo.py --video 3690649-hd_1906_1080_30fps.mp4 -s
 
 ![Demo output on the example video: SMPL-X in the camera view (left) and in the gravity-aligned world frame (right)](assets/demo.gif)
 
-Results go to `outputs/<video name>/`: SMPL-X parameters in the camera and in a gravity-aligned
-world frame (`results.pt`, `results.npz`), the world-frame motion as an AMASS file that the SMPL-X
-Blender add-on imports (`<video name>_amass.npz`, see [Blender](docs/OUTPUTS.md#blender-and-amass))
-and rendered videos, see [outputs](docs/OUTPUTS.md).
+Results go to `outputs/<video name>/` (see [outputs](docs/OUTPUTS.md)):
+
+* `results.pt`, `results.npz`: SMPL-X parameters and joints in the camera and in a gravity-aligned
+  world frame
+* `<video name>_amass.npz`: the world-frame motion as an AMASS SMPL-X file, e.g. for
+  [Blender](docs/OUTPUTS.md#blender-and-amass), [Unity and Unreal](docs/OUTPUTS.md#fbx-for-unity-and-unreal)
+  (FBX through Blender) or [humanoid robots](docs/OUTPUTS.md#humanoid-robots-gmr)
+* `<video name>.bvh`: the world-frame motion as a [BVH](docs/OUTPUTS.md#bvh) skeleton animation
+* rendered videos of the SMPL-X mesh in the camera view and in the world frame
 
 `--mode` trades speed for accuracy. Times are for the 37-second example video (1122 frames, `-s`)
 on an RTX 4090, including model loading and rendering:
@@ -140,7 +145,7 @@ model files are read from `checkpoints/` (or `$EXMR_CHECKPOINT_DIR`).
 | ExMR: initial whole-body estimate, then FootMR and HandMR | `exmr/model/exmr.py`, with `body_net.py` and `refiners.py` |
 | World-frame trajectory and post-processing (static joints, camera drift, ground contact, IK) | `exmr/model/global_traj.py` |
 | Temporal smoothing | `exmr/model/exmr.py`, `exmr/geometry/smoothing.py` |
-| Export for Blender (AMASS SMPL-X file) | `exmr/export.py` |
+| Export for Blender and robot retargeting (AMASS SMPL-X file) and BVH | `exmr/export.py` |
 | Rendered videos | `exmr/vis/` |
 
 ## Citation
