@@ -37,6 +37,8 @@ class Options:
     detector: str = "yolo11m"  # person detector: "yolo11m" or "yolo11x" (slower)
     static_cam: bool = False  # the camera is known to be static: no visual odometry
     vo: str = "simplevo"  # camera motion if not static_cam: "simplevo" or "dpvo" (optional)
+    start: float | None = None  # only the part of the video from this time on (seconds)
+    end: float | None = None  # ... up to this time (seconds; None: to its end)
     fps30: bool = False  # resample to 30 fps first (usually not needed; faster for e.g. 60 fps)
     snap_to_ground: bool = False  # flat ground, nothing to stand on: no vertical drift
     smoothing: str = "global"  # smooth the motion over time: "global" (world frame), "both", "none"
@@ -53,6 +55,10 @@ class Options:
         ]:
             if getattr(self, name) not in choices:
                 raise ValueError(f"Options.{name} must be one of {choices}")
+        if self.start is not None and self.start < 0:
+            raise ValueError("Options.start must be >= 0")
+        if self.end is not None and self.end <= (self.start or 0):
+            raise ValueError("Options.end must be after Options.start")
 
 
 def run_video(video_path, output_dir, options=None, assets=None):
@@ -78,13 +84,20 @@ def run_video(video_path, output_dir, options=None, assets=None):
     if options.render:
         _check_renderer()
     video_path, output_dir = Path(video_path), Path(output_dir)
+    if options.start is not None:
+        duration = V.video_lwh(video_path)[0] / V.video_fps(video_path)
+        if options.start >= duration:
+            raise ValueError(f"start {options.start:g} s is past the video's end ({duration:.2f}s)")
     name = video_path.stem
     cache = output_dir / "cache"
     cache.mkdir(parents=True, exist_ok=True)
     run_info = {"video": str(video_path), "options": asdict(options), "exmr": __version__}
     (output_dir / "run.json").write_text(json.dumps(run_info, indent=2) + "\n")
 
-    if options.fps30:
+    cut_path = None
+    if options.start is not None or options.end is not None:
+        video_path = cut_path = _cut(video_path, output_dir, options)
+    elif options.fps30:
         video_path = _resample_to_30fps(video_path, output_dir)
     frame_dir = output_dir / "frames"
     num_frames = _extract_frames(video_path, frame_dir)
@@ -93,7 +106,7 @@ def run_video(video_path, output_dir, options=None, assets=None):
         # damaged container): rebuild a constant-frame-rate video from the frames, so that every
         # reader sees the same frames
         log.warning("Frame count mismatch, rebuilding a constant-frame-rate video")
-        cfr_path = output_dir / f"{name}_cfr.mp4"
+        cfr_path = output_dir / f"{video_path.stem}_cfr.mp4"
         if not cfr_path.exists():
             V.encode_frames(frame_dir, cfr_path, fps=V.video_fps(video_path))
         video_path = cfr_path
@@ -116,7 +129,15 @@ def run_video(video_path, output_dir, options=None, assets=None):
         _render(results, frame_dir, output_dir, name, fps, assets)
     if not options.keep_frames:
         shutil.rmtree(frame_dir)
+        if cut_path is not None:
+            cut_path.unlink()  # lossless, so large; cut again in ~1 s if needed
     return results
+
+
+def range_label(start, end):
+    """The part start..end (seconds; None: the video's beginning / end) for file names, e.g.
+    "5-15.5s" or "5s-end"."""
+    return f"{start or 0:g}-{end:g}s" if end is not None else f"{start or 0:g}s-end"
 
 
 def compute_joints(results, smplx_npz):
@@ -353,6 +374,20 @@ def _extract_frames(video_path, frame_dir):
     num_frames = V.extract_frames(video_path, frame_dir)
     marker.write_text(f"{video_path}\n{num_frames}")
     return num_frames
+
+
+def _cut(video_path, output_dir, options):
+    """The part of the video from options.start to options.end, in output_dir; with options.fps30
+    also resampled to 30 fps (unless it has ~30 fps already, as _resample_to_30fps)."""
+    resample = options.fps30 and abs(V.video_fps(video_path) - 30) >= 0.5
+    label = range_label(options.start, options.end)
+    out = output_dir / f"{video_path.stem}_{label}{'_30fps' if resample else ''}.mp4"
+    if not out.exists():
+        log.info(f"Cutting {label}" + (", resampled to 30 fps" if resample else ""))
+        tmp = out.with_name(out.stem + ".tmp.mp4")  # no complete-looking file if interrupted
+        V.cut(video_path, tmp, options.start, options.end, fps=30 if resample else None)
+        os.replace(tmp, out)
+    return out
 
 
 def _resample_to_30fps(video_path, output_dir):

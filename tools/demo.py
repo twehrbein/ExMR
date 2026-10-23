@@ -4,6 +4,7 @@
     python tools/demo.py --video path/to/video.mp4 -s               # static camera
     python tools/demo.py --video path/to/video.mp4 --mode fast      # fastest
     python tools/demo.py --video path/to/video.mp4 --mode accurate  # slowest, needs DPVO
+    python tools/demo.py --video path/to/video.mp4 --start 1:05 --end 1:30  # only this part
 
 Modes: person detector, 2D keypoints, camera motion (moving camera)
     fast       YOLO11m, RTMW-x,                SimpleVO
@@ -14,7 +15,7 @@ Modes: person detector, 2D keypoints, camera motion (moving camera)
 Writes results.pt / results.npz (SMPL-X parameters and joints, see docs/OUTPUTS.md),
 <video name>_amass.npz (the world-frame motion, e.g. for Blender or GMR), <video name>.bvh (the
 same as a BVH skeleton animation) and rendered videos to --output_dir (default:
-outputs/<video name>).
+outputs/<video name>, with --start/--end outputs/<video name>_<start>-<end>s).
 """
 
 import argparse
@@ -22,7 +23,8 @@ import logging
 from pathlib import Path
 
 from exmr.assets import DEFAULT_CHECKPOINT_DIR, Assets
-from exmr.pipeline import Options, run_video
+from exmr.pipeline import Options, range_label, run_video
+from exmr.preprocessing.video import parse_time
 
 PRESETS = {
     "fast": dict(detector="yolo11m", pose_backend="rtmw", sapiens2_resolution="448x336",
@@ -49,6 +51,12 @@ def main():
     parser.add_argument(
         "-s", "--static_cam", action="store_true", help="the camera does not move (skips VO)"
     )
+    parser.add_argument(
+        "--start",
+        type=_time,
+        help="only the part of the video from this time on: seconds (83.5) or [hh:]mm:ss (1:23.5)",
+    )
+    parser.add_argument("--end", type=_time, help="... up to this time (default: the video's end)")
     parser.add_argument(
         "--mode", choices=list(PRESETS), default="balanced", help="speed/accuracy preset"
     )
@@ -93,7 +101,11 @@ def main():
     parser.add_argument(
         "--no_render", action="store_true", help="no videos, only the results (needs no nvdiffrast)"
     )
-    parser.add_argument("--keep_frames", action="store_true", help="keep the extracted frames")
+    parser.add_argument(
+        "--keep_frames",
+        action="store_true",
+        help="keep the extracted frames (and with --start/--end the cut video)",
+    )
     args = parser.parse_args()
 
     # ExMR's progress at INFO; third-party libraries only warnings
@@ -104,6 +116,8 @@ def main():
     log.setLevel(logging.INFO)
     if not args.video.exists():
         parser.error(f"video not found: {args.video}")
+    if args.end is not None and args.end <= (args.start or 0):
+        parser.error("--end must be after --start")
     # the preset, with the explicitly given parts replaced
     settings = {k: getattr(args, k) or v for k, v in PRESETS[args.mode].items()}
     keypoints = (
@@ -122,15 +136,27 @@ def main():
         detector=settings["detector"],
         static_cam=args.static_cam,
         vo=settings["vo"],
+        start=args.start,
+        end=args.end,
         fps30=args.fps30,
         snap_to_ground=args.snap_to_ground,
         smoothing=args.smoothing,
         render=not args.no_render,
         keep_frames=args.keep_frames,
     )
-    output_dir = args.output_dir or Path("outputs") / args.video.stem
+    name = args.video.stem
+    if args.start is not None or args.end is not None:
+        name += "_" + range_label(args.start, args.end)  # not over the outputs of the whole video
+    output_dir = args.output_dir or Path("outputs") / name
     run_video(args.video, output_dir, options, Assets(args.checkpoint_dir))
     log.info(f"Done: {output_dir}")
+
+
+def _time(text):
+    try:
+        return parse_time(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
 
 
 if __name__ == "__main__":

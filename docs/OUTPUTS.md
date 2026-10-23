@@ -1,6 +1,7 @@
 # Demo outputs
 
-`python tools/demo.py --video <video>` writes to `--output_dir` (default `outputs/<video name>`):
+`python tools/demo.py --video <video>` writes to `--output_dir` (default `outputs/<video name>`, with
+`--start`/`--end` `outputs/<video name>_<start>-<end>s`):
 
 | File | Content |
 |---|---|
@@ -12,7 +13,11 @@
 | `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane, seen by a static camera |
 | `<name>_incam_global.mp4` | both side by side (scaled down to at most 4096 pixels wide) |
 | `cache/` | cached preprocessing results (reused when the demo is run again with the same settings) |
-| `run.json` | the video and options of the run (e.g. `smoothing`) |
+| `run.json` | the video and options of the run (e.g. `smoothing`, `start`, `end`) |
+
+With `--start`/`--end`, all outputs cover only that part of the video: their first frame is the
+first frame at or after `--start`. Tracking, camera motion, the model and the ground see only that
+part, so the results differ slightly from the same frames of a run on the whole video.
 
 Which output for what:
 

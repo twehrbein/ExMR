@@ -81,6 +81,9 @@ Other options:
 
 * `--detector`, `--pose_backend`, `--sapiens2_resolution`, `--vo`: override single parts of the
   mode, e.g. `--mode accurate --vo simplevo` without DPVO.
+* `--start`, `--end`: only the part of the video between these times, in seconds (`83.5`) or as
+  in a video player (`1:23.5`, `1:02:03`); either can be left out. The outputs go to
+  `outputs/<video name>_<start>-<end>s/` and cover only that part (see [outputs](docs/OUTPUTS.md)).
 * `--fps30`: resample the video to 30 fps first. Usually not needed; ExMR is trained on 30 fps
   videos, so you may try it for videos far from 30 fps (e.g. 50 fps or more). For such videos it
   also makes the demo faster, since fewer frames are processed. The results then follow the
@@ -127,8 +130,9 @@ results = run_video("video.mp4", "outputs/video", Options(static_cam=True, rende
 body_pose = results["smplx_global"]["body_pose"]  # (L, 63), see docs/OUTPUTS.md
 ```
 
-`Options` has the same settings as the demo's command-line options (default: `balanced` mode). The
-model files are read from `checkpoints/` (or `$EXMR_CHECKPOINT_DIR`).
+`Options` has the same settings as the demo's command-line options (default: `balanced` mode;
+`start` and `end` in seconds). The model files are read from `checkpoints/` (or
+`$EXMR_CHECKPOINT_DIR`).
 
 ## How it works
 
