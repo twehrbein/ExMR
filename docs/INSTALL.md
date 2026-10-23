@@ -35,24 +35,40 @@ pip install -r requirements.txt
 pip install --no-deps \
     "git+https://github.com/geopavlakos/hamer.git@3a01849f4148352e9260b69bf28b65d1671a4905" \
     "git+https://github.com/facebookresearch/sapiens2.git@7e5bae88456ac418ff0e58e74106c9fe192055d4"
-# nvdiffrast (rendering) has no wheels and is built against the installed torch, with nvcc 12.x
-# and gcc <= 14. Install both into the environment, so the build does not depend on the system's
-# CUDA toolkit:
+# nvdiffrast renders the result videos: a prebuilt wheel for exactly this torch version
+pip install "https://huggingface.co/twehrbein/ExMR/resolve/03e36730ba7466ef09fcd98523fec6d9c2da8a0a/wheels/nvdiffrast-0.4.0%2Bpt2.8.0cu128-cp312-cp312-linux_x86_64.whl#sha256=ca26d44f4f198e8fb460f86f355c5fdaeaac6319e15a5551ea31397719c0d563"
+pip install -e .
+```
+
+The wheel is [nvdiffrast](https://github.com/NVlabs/nvdiffrast) v0.4.0, built by us for this torch
+version and hosted with the ExMR weights (see the
+[model card](https://huggingface.co/twehrbein/ExMR)); the hash pins the tested file. With another
+torch version, [build nvdiffrast](#optional-build-nvdiffrast-from-source) instead. The demo tries
+nvdiffrast before it starts; without it, everything but the videos works (`--no_render`).
+
+### Optional: build nvdiffrast from source
+
+nvdiffrast is compiled against the installed torch, with nvcc 12.x and gcc <= 14. Install both
+into the environment, so that the build does not depend on the system's CUDA toolkit (DPVO below
+needs the same):
+
+```bash
 conda install -y -c conda-forge cuda-version=12.8 cuda-nvcc cuda-cudart-dev cuda-cccl \
     libcublas-dev libcusparse-dev libcusolver-dev ninja
 # re-activate: the compiler packages just installed point CC/CXX to the environment's gcc 14
 # only on activation (a newer system gcc, e.g. 15, is rejected by nvcc 12.8)
 conda activate exmr
-# compiles for the GPUs visible on this machine; to build for other GPUs (or without one),
-# set TORCH_CUDA_ARCH_LIST, see the table below
+# build for the GPUs that the torch build above supports (the compiler packages set a longer
+# list, with older GPUs that DPVO cannot be built for); fewer build faster, see the table below
+export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0;10.0;12.0"
 CUDA_HOME=$CONDA_PREFIX pip install --no-build-isolation \
     "git+https://github.com/NVlabs/nvdiffrast.git@v0.4.0"
-pip install -e .
 ```
 
 `TORCH_CUDA_ARCH_LIST` takes the compute capabilities of the GPUs to build for, separated by
 semicolons (e.g. `"8.6;8.9"`); `nvidia-smi --query-gpu=name,compute_cap --format=csv` prints them.
-The torch build above supports:
+The list above covers all GPUs that the torch build supports (RTX 40 series GPUs run the code
+built for `8.6`):
 
 | GPU | `TORCH_CUDA_ARCH_LIST` |
 |---|---|
@@ -69,9 +85,12 @@ The torch build above supports:
 
 DPVO, a learned visual odometry method, is an alternative to the default SimpleVO for estimating
 the motion of a moving camera (`--vo dpvo`); `--mode accurate` uses it. See
-[camera motion](../README.md#camera-motion) for the differences.
+[camera motion](../README.md#camera-motion) for the differences. It is compiled with the
+compiler from [build nvdiffrast](#optional-build-nvdiffrast-from-source) (its `conda install` and
+re-activation).
 
 ```bash
+export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0;10.0;12.0"  # as for nvdiffrast, see above
 git -C third_party/DPVO apply ../patches/DPVO-torch2.7.patch  # build fix for torch >= 2.7
 wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 unzip eigen-3.4.0.zip -d third_party/DPVO/thirdparty && rm eigen-3.4.0.zip

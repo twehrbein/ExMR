@@ -90,7 +90,9 @@ def main():
         "_incam video), smoother but following fast foot motion slightly less closely in the "
         "image. none: the raw network output.",
     )
-    parser.add_argument("--no_render", action="store_true", help="only save the results")
+    parser.add_argument(
+        "--no_render", action="store_true", help="no videos, only the results (needs no nvdiffrast)"
+    )
     parser.add_argument("--keep_frames", action="store_true", help="keep the extracted frames")
     args = parser.parse_args()
 

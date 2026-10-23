@@ -94,7 +94,7 @@ Other options:
   By default (`global`) only the world-frame motion is smoothed; the camera-frame motion stays
   raw, best aligned with the image. `both` also smooths the camera-frame motion (smoother, but
   fast foot motion is followed slightly less closely in the image); `none` keeps the raw output.
-* `--no_render`: only save the results.
+* `--no_render`: no videos, only the results (needs no nvdiffrast).
 
 Intermediate results are cached in `outputs/<video name>/cache/`, so rerunning the demo (e.g.
 with `--no_render` removed, or another option) only recomputes what changed.

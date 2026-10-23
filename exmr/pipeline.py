@@ -67,6 +67,8 @@ def run_video(video_path, output_dir, options=None, assets=None):
             "DPVO is not installed: see the optional DPVO section of docs/INSTALL.md, or use "
             "SimpleVO (--vo simplevo)"
         )
+    if options.render:
+        _check_renderer()
     video_path, output_dir = Path(video_path), Path(output_dir)
     name = video_path.stem
     cache = output_dir / "cache"
@@ -264,6 +266,23 @@ def _save_results(results, output_dir):
         else:
             flat[key] = np.asarray(value)
     np.savez(output_dir / "results.npz", **flat)
+
+
+def _check_renderer():
+    """Render a triangle with nvdiffrast, so that a missing or broken install (e.g. built for
+    another torch version or GPU) stops the run now rather than after the reconstruction."""
+    try:
+        import nvdiffrast.torch as dr
+
+        triangle = torch.tensor([[[-1.0, -1, 0, 1], [1, -1, 0, 1], [0, 1, 0, 1]]], device="cuda")
+        faces = torch.tensor([[0, 1, 2]], dtype=torch.int32, device="cuda")
+        dr.rasterize(dr.RasterizeCudaContext(), triangle, faces, (8, 8))
+    except Exception as e:
+        raise RuntimeError(
+            f"nvdiffrast, which renders the videos, does not work: {e}\nInstall it as in "
+            "docs/INSTALL.md, or skip the videos (--no_render); the other outputs need no "
+            "nvdiffrast"
+        ) from e
 
 
 def _render(results, frame_dir, output_dir, name, fps, assets):
