@@ -48,6 +48,9 @@ DINOV3_COMMIT = "6876159a11b4df116f30f667f8c9888617df0751"
 DINOV3_TREE_SHA256 = "0389aafef4614add2090f2907f210698df48f16d3f2b845b6002c4ebb6aea0f8"
 YOLO_URL = "https://github.com/ultralytics/assets/releases/download/v8.3.0/{}"
 HAMER_URL = "https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz"
+# the archive's files that ExMR needs are also in the HaMeR authors' demo Space, which is tried
+# first: 2.7 GB instead of the archive's 6 GB
+HAMER_SPACE, HAMER_SPACE_REVISION = "geopavlakos/HaMeR", "aabc78ee4fd1f1ccf1a55fdd4225bf84df0e680a"
 DPVO_URL = (
     "https://www.dropbox.com/scl/fo/2g6e134ruh1acmaye5bmy/AK0DY9WLZ25elq-7N7sJcB0/models.zip"
     "?rlkey=4j336vcc4h324j4p4ji3ppl0t&dl=1"
@@ -77,8 +80,10 @@ SHA256 = {
     "hamer/hamer_ckpts/checkpoints/hamer.ckpt": (
         "e5cc06f294d88a92dee24e603480aab04de532b49f0e08200804ee7d90e16f53"
     ),
+    # the archive's file or the Space's, which differ only in MANO's paths (ExMR sets them itself)
     "hamer/hamer_ckpts/model_config.yaml": (
-        "0e5eeb82752e47dfd01db8e13ccc4c5eba9bf83f53da8285523b8d3e87247aa3"
+        "0e5eeb82752e47dfd01db8e13ccc4c5eba9bf83f53da8285523b8d3e87247aa3",
+        "2217f6bcf27ae4c074e2a33a3409d822bbfd02931373deedb9f71287adeabe16",
     ),
     "hamer/hamer_ckpts/dataset_config.yaml": (
         "392d10aece296152769328f14bb1c0137d6ea2f50f7e69f716ee00e9ad6ac343"
@@ -115,8 +120,11 @@ def sha256_file(path):
 
 
 def check_sha256(path, expected):
+    """expected: the SHA256, or a tuple of the accepted ones."""
     actual = sha256_file(path)
-    if actual != expected:
+    accepted = expected if isinstance(expected, tuple) else (expected,)
+    if actual not in accepted:
+        expected = " or ".join(accepted)
         raise RuntimeError(
             f"Checksum mismatch for {path}:\n  expected {expected}\n  got      {actual}"
         )
@@ -155,7 +163,7 @@ class Downloader:
                 _copy(response, f, total=response.length, desc=rel)
             self.place(tmp, rel)
 
-    def hf(self, repo, revision, filename, rel):
+    def hf(self, repo, revision, filename, rel, repo_type="model"):
         """A file of a Hugging Face repo (uses the token of `hf auth login` for gated repos)."""
         if not self.todo(rel):
             return
@@ -164,7 +172,9 @@ class Downloader:
 
         with tempfile.TemporaryDirectory(dir=self.root) as tmp:
             try:
-                path = hf_hub_download(repo, filename, revision=revision, local_dir=tmp)
+                path = hf_hub_download(
+                    repo, filename, repo_type=repo_type, revision=revision, local_dir=tmp
+                )
             except GatedRepoError:
                 raise RuntimeError(
                     f"{repo} is gated: request access at https://huggingface.co/{repo}, wait for "
@@ -251,15 +261,23 @@ def _tree_sha256(root):
 
 
 def fetch_hamer(d, args):
-    """HaMeR's demo data: streamed, only the HaMeR checkpoint and MANO mean parameters are kept
-    (the archive's 3.8 GB of ViTPose weights are not needed)."""
-    members = {
-        f"_DATA/{rel.removeprefix('hamer/')}": rel
-        for rel in SHA256
-        if rel.startswith("hamer/") and d.todo(rel)
-    }
-    if not members:
-        return
+    """The HaMeR checkpoint and MANO mean parameters of HaMeR's demo data: from the HaMeR authors'
+    demo Space, else from the archive."""
+    rels = [rel for rel in SHA256 if rel.startswith("hamer/") and d.todo(rel)]
+    try:
+        for rel in rels:
+            name = f"_DATA/{rel.removeprefix('hamer/')}"
+            d.hf(HAMER_SPACE, HAMER_SPACE_REVISION, name, rel, repo_type="space")
+    except Exception as e:
+        reason = str(e).split("\n", 1)[0] or type(e).__name__
+        print(f"  {HAMER_SPACE} failed ({reason}), trying {HAMER_URL}")
+        _fetch_hamer_archive(d, [rel for rel in rels if not (d.root / rel).exists()])
+
+
+def _fetch_hamer_archive(d, rels):
+    """Streamed: only the needed files are kept (the archive's 3.8 GB of ViTPose weights are
+    not needed)."""
+    members = {f"_DATA/{rel.removeprefix('hamer/')}": rel for rel in rels}
     with tempfile.TemporaryDirectory(dir=d.root) as tmp, _open(HAMER_URL) as response:
         with tqdm(total=response.length, unit="B", unit_scale=True, unit_divisor=1024,
                   desc="hamer_demo_data.tar.gz", leave=False) as bar:  # fmt: skip
