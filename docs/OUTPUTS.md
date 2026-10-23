@@ -6,12 +6,23 @@
 |---|---|
 | `results.pt` | reconstruction: SMPL-X parameters and 3D/2D joints (PyTorch, see below) |
 | `results.npz` | the same as NumPy arrays, with flattened keys (`smplx_incam_body_pose`, ...) |
-| `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for [Blender](#blender-and-amass) or [humanoid robots](#humanoid-robots-gmr) |
+| `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for [Blender](#blender-and-amass), [Unity and Unreal](#fbx-for-unity-and-unreal) or [humanoid robots](#humanoid-robots-gmr) |
+| `<name>.bvh` | the world-frame motion as a [BVH](#bvh) skeleton animation (centimeters), e.g. for animation software |
 | `<name>_incam.mp4` | SMPL-X mesh rendered over the input video |
 | `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane, seen by a static camera |
 | `<name>_incam_global.mp4` | both side by side (scaled down to at most 4096 pixels wide) |
 | `cache/` | cached preprocessing results (reused when the demo is run again with the same settings) |
 | `run.json` | the video and options of the run (e.g. `smoothing`) |
+
+Which output for what:
+
+| To ... | use |
+|---|---|
+| analyze the motion, e.g. joint positions in Python | `results.npz` or `results.pt`: SMPL-X parameters and joints ([results.pt](#resultspt)) |
+| see the SMPL-X body in Blender | `<name>_amass.npz` with the SMPL-X Blender add-on ([Blender and AMASS](#blender-and-amass)) |
+| use the body in Unity or Unreal | an FBX exported from Blender ([FBX](#fbx-for-unity-and-unreal)) |
+| animate your own character, e.g. in Blender, Maya or MotionBuilder | `<name>.bvh`, retargeted to the character's rig ([BVH](#bvh)) |
+| drive a humanoid robot | `<name>_amass.npz` with GMR ([humanoid robots](#humanoid-robots-gmr)) |
 
 ## results.pt
 
@@ -129,6 +140,41 @@ version:
 from exmr.export import save_amass
 
 save_amass(results["smplx_global"], results["fps"], "motion_amass.npz", "SMPLX_NEUTRAL.npz")
+```
+
+### FBX for Unity and Unreal
+
+The add-on also exports the animated SMPL-X body as FBX: after importing the AMASS file, select
+the body's mesh, click "Export FBX" (tab "SMPL Models", panel "Export") and choose the Format
+(Unity or Unreal) and "Blend Shapes: None: Apply shape space". The default blend shapes, SMPL-X's
+shape and pose corrective shapes, are not animated by the import and make the file much larger
+(150 MB instead of 5 MB for the example video).
+
+## BVH
+
+`<name>.bvh` holds the world-frame motion (`smplx_global`) as a skeleton animation, e.g. to put
+the motion on another character in Blender, Maya or MotionBuilder:
+
+- the 55 joints of the SMPL-X skeleton, fingers included, named as in `joint_names` (`pelvis`,
+  `left_hip`, ...), with end sites at the big toes, the fingertips, the chin and the eyes
+- the skeleton in the SMPL-X rest pose (a T-pose) of the person's body shape, in centimeters, y up
+- one frame per video frame (`Frame Time`: 1 / frame rate); in every frame, the joints are at
+  `joints_global` of `results.pt` (in meters there)
+- the root (`pelvis`) with absolute positions; the rotation order of the pelvis, shoulders, elbows
+  and ankles differs from the others' XYZ, which keeps them away from gimbal lock, and the angles
+  do not jump by 360 degrees between frames
+- the jaw and the eyes do not move (the face is not estimated)
+
+In Blender: File > Import > Motion Capture (.bvh) with Scale 0.01 (centimeters to meters), and
+"Update Scene FPS" and "Update Scene Duration" checked. The BVH has no mesh; for the SMPL-X body,
+import the AMASS file (above).
+
+`exmr.export.save_bvh` writes the file from `results.pt`:
+
+```python
+from exmr.export import save_bvh
+
+save_bvh(results["smplx_global"], results["fps"], "motion.bvh", "SMPLX_NEUTRAL.npz")
 ```
 
 ## Humanoid robots (GMR)

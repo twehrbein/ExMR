@@ -21,7 +21,7 @@ import torch
 
 from exmr import __version__
 from exmr.assets import RTMW_SHA256, Assets
-from exmr.export import save_amass
+from exmr.export import save_amass, save_bvh
 from exmr.geometry.camera import bbx_xys_from_xyxy, cam_angvel_from_rotations, estimate_K
 from exmr.preprocessing import video as V
 from exmr.preprocessing.keypoints import VISIBILITY_THRESHOLD, detect_keypoints
@@ -99,6 +99,7 @@ def run_video(video_path, output_dir, options=None, assets=None):
     results |= compute_joints(results, assets.smplx)
     _save_results(results, output_dir)
     save_amass(results["smplx_global"], fps, output_dir / f"{name}_amass.npz", assets.smplx)
+    save_bvh(results["smplx_global"], fps, output_dir / f"{name}.bvh", assets.smplx)
 
     if options.render:
         log.info("Rendering")
