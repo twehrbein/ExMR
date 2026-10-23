@@ -96,6 +96,7 @@ def run_video(video_path, output_dir, options=None, assets=None):
     log.info("Running ExMR")
     results = _run_model(data, options, fps, assets)
     results["fps"] = fps
+    results |= compute_joints(results, assets.smplx)
     _save_results(results, output_dir)
     save_amass(results["smplx_global"], fps, output_dir / f"{name}_amass.npz", assets.smplx)
 
@@ -105,6 +106,29 @@ def run_video(video_path, output_dir, options=None, assets=None):
     if not options.keep_frames:
         shutil.rmtree(frame_dir)
     return results
+
+
+def compute_joints(results, smplx_npz):
+    """The joints of results["smplx_incam"] and results["smplx_global"] (each (L, D)) and their
+    projection into the image with results["K_fullimg"]: the keys joints_incam, joints_global,
+    joints_2d and joint_names of results.pt (see docs/OUTPUTS.md). Runs on the CPU (about a second
+    for 1000 frames).
+
+    Args:
+        smplx_npz: the SMPLX_NEUTRAL.npz of the parameters
+    """
+    from exmr.body_models.smplx_model import SmplxModel
+
+    smplx = SmplxModel(smplx_npz)
+    with torch.no_grad():
+        incam, world = (smplx.joints(**results[key]) for key in ("smplx_incam", "smplx_global"))
+    uvz = torch.einsum("lij,lkj->lki", results["K_fullimg"], incam)
+    return {
+        "joints_incam": incam,
+        "joints_global": world,
+        "joints_2d": uvz[..., :2] / uvz[..., 2:],
+        "joint_names": smplx.joint_names,
+    }
 
 
 def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache):

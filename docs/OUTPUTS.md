@@ -4,7 +4,7 @@
 
 | File | Content |
 |---|---|
-| `results.pt` | reconstruction (PyTorch, see below) |
+| `results.pt` | reconstruction: SMPL-X parameters and 3D/2D joints (PyTorch, see below) |
 | `results.npz` | the same as NumPy arrays, with flattened keys (`smplx_incam_body_pose`, ...) |
 | `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for [Blender](#blender-and-amass) or [humanoid robots](#humanoid-robots-gmr) |
 | `<name>_incam.mp4` | SMPL-X mesh rendered over the input video |
@@ -25,6 +25,9 @@ For a video with `L` frames:
 |---|---|---|
 | `smplx_incam` | dict | SMPL-X parameters in the camera frame (x right, y down, z forward); not smoothed over time unless `--smoothing both` |
 | `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s); smoothed over time unless `--smoothing none` |
+| `joints_incam`, `joints_global` | <code>(L,&nbsp;76,&nbsp;3)</code> | 3D joints of `smplx_incam` and `smplx_global` in meters, see [joints](#joints) |
+| `joints_2d` | <code>(L,&nbsp;76,&nbsp;2)</code> | `joints_incam` projected into the image with `K_fullimg`, in pixels |
+| `joint_names` | 76 | names of the joints, e.g. `left_heel` |
 | `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (in contact) |
 | `K_fullimg` | <code>(L,&nbsp;3,&nbsp;3)</code> | camera intrinsics used (estimated from the image size) |
 | `bbx_xyxy` | `(L, 4)` | tracked bounding box of the person, `[x1, y1, x2, y2]` in pixels |
@@ -52,10 +55,39 @@ L = len(params["body_pose"])
 model = smplx.SMPLX(
     "SMPLX_NEUTRAL.npz", use_pca=False, flat_hand_mean=True, num_betas=10, batch_size=L
 )  # batch_size: the face parameters, which ExMR does not estimate, default to zeros of that size
-vertices = model(**params).vertices  # (L, 10475, 3)
+output = model(**params)
+vertices = output.vertices  # (L, 10475, 3)
+joints = output.joints[:, :76]  # (L, 76, 3): joints_incam or joints_global of results.pt
 ```
 
-`exmr.body_models.smplx_model.SmplxModel` gives the same vertices.
+`exmr.body_models.smplx_model.SmplxModel` gives the same vertices and joints.
+
+### Joints
+
+The 76 joints are the 55 joints of the SMPL-X skeleton followed by 21 points on the mesh surface,
+in the order of the [smplx](https://github.com/vchoutas/smplx) package's output (`joint_names`):
+
+| Index | Joints |
+|---|---|
+| 0-21 | pelvis and 21 body joints (the same as SMPL's first 22, e.g. for comparisons with SMPL-based methods) |
+| 22-24 | jaw, left and right eye (the face is not estimated: they follow the head) |
+| 25-54 | 15 finger joints per hand, left hand first |
+| 55-59 | nose, right and left eye, right and left ear (surface points) |
+| 60-65 | big toe, small toe and heel, left foot first (surface points) |
+| 66-75 | fingertips, thumb to pinky, left hand first (surface points) |
+
+The skeleton joints are rotation centers inside the body, the surface points lie on the skin, like
+the foot and fingertip keypoints of 2D detectors such as OpenPose.
+
+`exmr.pipeline.compute_joints` computes the joint keys (`joints_incam`, `joints_global`,
+`joints_2d`, `joint_names`) from the SMPL-X parameters, e.g. for results of ExMR versions before
+0.1.4, which have none:
+
+```python
+from exmr.pipeline import compute_joints
+
+results |= compute_joints(results, "SMPLX_NEUTRAL.npz")
+```
 
 ## Blender and AMASS
 
