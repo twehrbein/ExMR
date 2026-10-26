@@ -143,12 +143,17 @@ class DPVOOdometry:
 
     Args:
         checkpoint: DPVO weights (dpvo.pth)
-        resize: frames are downscaled by this factor
+        resize: frames are downscaled by this factor, and further if their longer side would
+            still exceed max_side pixels (4K videos: to 960 px, like 1080p ones; DPVO's time grows
+            with the pixels, its rotations do not get better)
+        max_side: see resize
         buffer: DPVO frame buffer size
     """
 
-    def __init__(self, checkpoint, resize=0.5, buffer=4000):
-        self.checkpoint, self.resize, self.buffer = checkpoint, resize, buffer
+    def __init__(self, checkpoint, resize=0.5, max_side=960, buffer=4000):
+        self.checkpoint, self.resize, self.max_side, self.buffer = (
+            checkpoint, resize, max_side, buffer
+        )  # fmt: skip
 
     def __call__(self, video_path, K):
         """video and its (3, 3) intrinsics -> (L, 3, 3) world-to-camera rotations (float32)"""
@@ -156,6 +161,8 @@ class DPVOOdometry:
         from dpvo.dpvo import DPVO
 
         intrinsics = torch.stack([K[0, 0], K[1, 1], K[0, 2], K[1, 2]]).float()  # fx, fy, cx, cy
+        L, width, height = video_lwh(video_path)
+        resize = min(self.resize, self.max_side / max(width, height))
         # frames are decoded in a background thread (OpenCV releases the GIL), overlapping with
         # DPVO on the GPU. A thread rather than a process: importing dpvo switches the
         # multiprocessing start method to "spawn" for the whole interpreter.
@@ -163,13 +170,13 @@ class DPVOOdometry:
         stop = threading.Event()
         reader = threading.Thread(
             target=_dpvo_video_stream,
-            args=(frames, stop, str(video_path), intrinsics, self.resize),
+            args=(frames, stop, str(video_path), intrinsics, resize),
             daemon=True,
         )
         reader.start()
 
         slam = None
-        pbar = tqdm(total=video_lwh(video_path)[0], desc="DPVO")
+        pbar = tqdm(total=L, desc="DPVO")
         # no_grad is essential: DPVO writes network outputs into persistent buffers, which
         # would otherwise keep every frame's autograd graph alive (memory grows ~0.25 GB/frame)
         try:

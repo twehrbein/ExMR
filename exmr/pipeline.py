@@ -12,7 +12,7 @@ import logging
 import multiprocessing
 import os
 import shutil
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -86,6 +86,11 @@ def run_video(video_path, output_dir, options=None, assets=None):
         )
     if options.render:
         _check_renderer()
+    # GeForce tensor cores run FP16 matmuls with FP32 accumulation at half rate: accumulating in
+    # FP16 makes the FP16 stages (Sapiens2, SAM 3D Body, HaMeR) 10-20% faster, with unchanged
+    # accuracy (keypoints/tokens change at the 1e-3 level). Other GPUs
+    # accumulate at full rate and gain nothing, so they keep the default.
+    torch.backends.cuda.matmul.allow_fp16_accumulation = _is_geforce()
     video_path, output_dir = Path(video_path), Path(output_dir)
     if options.start is not None:
         duration = V.video_lwh(video_path)[0] / V.video_fps(video_path)
@@ -189,6 +194,12 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
         log.info("Starting visual odometry in the background")
         simplevo = _in_background(_simplevo_rotations, video_path, options.f_mm)
 
+    # RTMW's session build and warm-up run in a thread while
+    # the tracker runs, which hides about half of it
+    rtmw = None
+    if backend == "rtmw" and not _is_cached(cache / "keypoints.pt", kp_settings):
+        rtmw = _in_thread(_warm_rtmw, assets.rtmw)
+
     def track():
         from exmr.preprocessing.tracker import Tracker
 
@@ -206,14 +217,16 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
                 backend, assets.sapiens2, frame_dir, bbx_xyxy,
                 resolution=options.sapiens2_resolution,
             )  # fmt: skip
-        return detect_keypoints(backend, assets.rtmw, frame_dir, bbx_xyxy, sha256=RTMW_SHA256)
+        return rtmw.result()(frame_dir, bbx_xyxy)
 
     kp2d = _cached(cache / "keypoints.pt", kp_settings, keypoints)  # (L, 63, 3)
 
     def body_features():
         from exmr.preprocessing.body_features import SamBodyFeatures
 
-        return SamBodyFeatures(assets.sam_3d_body)(frame_dir, bbx_xyxy, K)
+        # the backbone profits from FP16 accumulation only in float16 (see run_video)
+        fp16 = torch.backends.cuda.matmul.allow_fp16_accumulation
+        return SamBodyFeatures(assets.sam_3d_body, fp16=fp16)(frame_dir, bbx_xyxy, K)
 
     body_settings = {**tracker_settings, "f_mm": options.f_mm}
     body_feat = _cached(cache / "body_features.pt", body_settings, body_features)
@@ -308,6 +321,10 @@ def _save_results(results, output_dir):
     np.savez(output_dir / "results.npz", **flat)
 
 
+def _is_geforce():
+    return torch.cuda.is_available() and "GeForce" in torch.cuda.get_device_name()
+
+
 def _check_renderer():
     """Render a triangle with nvdiffrast, so that a missing or broken install (e.g. built for
     another torch version or GPU) stops the run now rather than after the reconstruction."""
@@ -338,6 +355,22 @@ def _render(results, frame_dir, output_dir, name, fps, assets):
         results["K_fullimg"][0], fps,
         [output_dir / f"{name}_{view}.mp4" for view in ("incam", "global", "incam_global")],
     )  # fmt: skip
+
+
+def _warm_rtmw(checkpoint):
+    from exmr.preprocessing.keypoints.rtmw import RTMWKeypoints
+
+    model = RTMWKeypoints(checkpoint, sha256=RTMW_SHA256)
+    model.warm_up()
+    return model
+
+
+def _in_thread(fn, *args):
+    """The future result of fn(*args), computed in a new thread."""
+    executor = ThreadPoolExecutor(1)
+    future = executor.submit(fn, *args)
+    executor.shutdown(wait=False)
+    return future
 
 
 def _in_background(fn, *args):

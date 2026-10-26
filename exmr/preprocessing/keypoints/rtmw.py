@@ -42,6 +42,13 @@ class RTMWKeypoints:
         if self.session.get_providers()[0] != "CUDAExecutionProvider":
             raise RuntimeError("ONNX Runtime CUDA provider unavailable for RTMW")
 
+    def warm_up(self):
+        """Run one batch of zeros: ONNX Runtime and cuDNN set the network up for the batch shape
+        on its first use (~7 s), which can thereby happen while e.g. the tracker runs."""
+        inp = self.session.get_inputs()[0]
+        w, h = INPUT_SIZE
+        self.session.run(None, {inp.name: np.zeros((self.batch_size, 3, h, w), dtype=np.float32)})
+
     def __call__(self, frame_dir, bbx_xyxy):
         """frame_dir with %06d.jpg frames, bbx_xyxy (L, 4) -> (L, 63, 3) [x, y, raw score]"""
         boxes = bbx_xyxy.cpu().numpy()

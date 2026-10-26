@@ -112,6 +112,11 @@ class HamerHandFeatures:
                 )
                 i += bs
                 pbar.update(bs)
+        if not torch.isfinite(tokens).all():
+            raise RuntimeError(
+                "Non-finite HaMeR hand features, probably a float16 overflow: disable FP16 "
+                "accumulation in run_video (exmr/pipeline.py) and please report this"
+            )
         return tokens
 
     def _forward(self, crops):
