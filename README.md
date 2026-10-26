@@ -3,6 +3,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2610.26213-b31b1b.svg)](https://arxiv.org/abs/2610.26213)
 [![Project page](https://img.shields.io/badge/Project-Page-blue)](https://twehrbein.github.io/exmr-website/)
 [![Model](https://img.shields.io/badge/%F0%9F%A4%97-Model-yellow)](https://huggingface.co/twehrbein/ExMR)
+[![Demo](https://img.shields.io/badge/%F0%9F%A4%97-Demo-yellow)](https://huggingface.co/spaces/twehrbein/ExMR)
 
 ![ExMR teaser](assets/teaser.jpg)
 
@@ -15,6 +16,8 @@
 
 ## News
 
+- **[2026-10-26]** Online demo on [Hugging Face Spaces](https://huggingface.co/spaces/twehrbein/ExMR):
+  try ExMR in the browser, without installing anything.
 - **[2026-10-26]** [v0.1.4](https://github.com/twehrbein/ExMR/releases/tag/v0.1.4): 3D and 2D joints
   in the results, BVH export, FBX for Unity and Unreal (through Blender) and retargeting to humanoid
   robots with [GMR](https://github.com/YanjieZe/GMR), see [outputs](docs/OUTPUTS.md); a faster demo
@@ -40,6 +43,9 @@ first: its weights are gated and access is approved manually, which can take a w
 [installation](docs/INSTALL.md) for details.
 
 ## Quick Start
+
+To try ExMR without installing it, the [online demo](https://huggingface.co/spaces/twehrbein/ExMR)
+runs the default mode on up to 20 seconds of a video and returns the same outputs.
 
 Reconstruct the main person in a video:
 
