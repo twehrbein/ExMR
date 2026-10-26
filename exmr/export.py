@@ -6,8 +6,6 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-from exmr.body_models.smplx_model import SmplxModel
-from exmr.body_models.smplx_skeleton import SmplxSkeleton
 from exmr.geometry.rotation_conversions import axis_angle_to_matrix, matrix_to_axis_angle
 
 # ExMR's world frame is y-up, AMASS's z-up: +90 degrees about x
@@ -39,13 +37,13 @@ BVH_END_SITES = {
 CHIN_VERTEX = 8750  # a vertex of the SMPL-X mesh, on the chin's midline
 
 
-def save_amass(smplx_params, fps, path, smplx_npz):
+def save_amass(smplx_params, fps, path, smplx):
     """Save world-frame SMPL-X parameters (results["smplx_global"], each (L, D), y up) to path as
     an AMASS SMPL-X .npz (z up, float64).
 
     Args:
         fps: frame rate of the motion; stored rounded to an integer
-        smplx_npz: the SMPLX_NEUTRAL.npz of the parameters, for the rest-pose pelvis position
+        smplx: a SmplxModel of the parameters, for the rest-pose pelvis position
     """
     params = {k: v.detach().cpu().double() for k, v in smplx_params.items()}
     R = Y_UP_TO_Z_UP
@@ -53,7 +51,8 @@ def save_amass(smplx_params, fps, path, smplx_npz):
     # SMPL-X rotates the body about its rest-pose pelvis J0, not about the origin: the rotated
     # world moves the pelvis from J0 + transl to R (J0 + transl)
     betas = params["betas"][0]  # the same in all frames
-    pelvis = SmplxSkeleton(smplx_npz)(betas.float())[0].double()
+    with torch.no_grad():
+        pelvis = smplx.joints(**_rest_pose(params))[0, 0].double()
     trans = (pelvis + params["transl"]) @ R.T - pelvis
 
     zeros = torch.zeros(len(trans), 3, dtype=torch.float64)
@@ -79,24 +78,22 @@ def save_amass(smplx_params, fps, path, smplx_npz):
     )
 
 
-def save_bvh(smplx_params, fps, path, smplx_npz):
+def save_bvh(smplx_params, fps, path, smplx):
     """Save world-frame SMPL-X parameters (results["smplx_global"], each (L, D), y up) to path as
     a BVH animation of the 55 SMPL-X joints, in centimeters: the skeleton is the SMPL-X rest pose
     of the person's shape, and the joints are at SmplxModel.joints(...)[:, :55] in every frame.
 
     Args:
         fps: frame rate of the motion
-        smplx_npz: the SMPLX_NEUTRAL.npz of the parameters
+        smplx: a SmplxModel of the parameters
     """
     params = {k: v.detach().cpu().float() for k, v in smplx_params.items()}
     L = len(params["transl"])
-    model = SmplxModel(smplx_npz)
-    names, parents = model.joint_names, model.model.parents.tolist()
-    rest_params = {k: torch.zeros_like(v[:1]) for k, v in params.items()}
-    rest_params["betas"] = params["betas"][:1]  # the same in all frames
+    names, parents = smplx.joint_names, smplx.model.parents.tolist()
+    rest_params = _rest_pose(params)
     with torch.no_grad():
-        rest = model.joints(**rest_params)[0].double().numpy() * 100  # (76, 3)
-        chin = model(**rest_params)[0, CHIN_VERTEX].double().numpy() * 100
+        rest = smplx.joints(**rest_params)[0].double().numpy() * 100  # (76, 3)
+        chin = smplx(**rest_params)[0, CHIN_VERTEX].double().numpy() * 100
     points = dict(zip(names, rest)) | {"chin": chin}
 
     children = [[c for c in range(55) if parents[c] == j] for j in range(55)]
@@ -143,6 +140,13 @@ def save_bvh(smplx_params, fps, path, smplx_npz):
     with open(path, "w") as f:
         f.write("\n".join(lines) + f"\nMOTION\nFrames: {L}\nFrame Time: {1 / fps:.8f}\n")
         np.savetxt(f, motion, fmt="%.4f")
+
+
+def _rest_pose(params):
+    """The shape of params in the zero pose at the origin: float32 SMPL-X parameters, each (1, D)"""
+    rest = {k: torch.zeros_like(v[:1], dtype=torch.float32) for k, v in params.items()}
+    rest["betas"] = params["betas"][:1].float()  # the same in all frames
+    return rest
 
 
 def _continuous_euler(euler):

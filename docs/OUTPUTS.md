@@ -100,9 +100,10 @@ the foot and fingertip keypoints of 2D detectors such as OpenPose.
 0.1.4, which have none:
 
 ```python
+from exmr.body_models.smplx_model import SmplxModel
 from exmr.pipeline import compute_joints
 
-results |= compute_joints(results, "SMPLX_NEUTRAL.npz")
+results |= compute_joints(results, SmplxModel("SMPLX_NEUTRAL.npz"))
 ```
 
 ## Blender and AMASS
@@ -142,9 +143,11 @@ hand poses are relative to the flat hand, as in `results.pt`.
 version:
 
 ```python
+from exmr.body_models.smplx_model import SmplxModel
 from exmr.export import save_amass
 
-save_amass(results["smplx_global"], results["fps"], "motion_amass.npz", "SMPLX_NEUTRAL.npz")
+smplx = SmplxModel("SMPLX_NEUTRAL.npz")
+save_amass(results["smplx_global"], results["fps"], "motion_amass.npz", smplx)
 ```
 
 ### FBX for Unity and Unreal
@@ -177,9 +180,11 @@ import the AMASS file (above).
 `exmr.export.save_bvh` writes the file from `results.pt`:
 
 ```python
+from exmr.body_models.smplx_model import SmplxModel
 from exmr.export import save_bvh
 
-save_bvh(results["smplx_global"], results["fps"], "motion.bvh", "SMPLX_NEUTRAL.npz")
+smplx = SmplxModel("SMPLX_NEUTRAL.npz")
+save_bvh(results["smplx_global"], results["fps"], "motion.bvh", smplx)
 ```
 
 ## Humanoid robots (GMR)

@@ -21,6 +21,7 @@ import torch
 
 from exmr import __version__
 from exmr.assets import RTMW_SHA256, Assets
+from exmr.body_models.smplx_model import SmplxModel
 from exmr.export import save_amass, save_bvh
 from exmr.geometry.camera import bbx_xys_from_xyxy, cam_angvel_from_rotations, estimate_K
 from exmr.preprocessing import video as V
@@ -127,14 +128,15 @@ def run_video(video_path, output_dir, options=None, assets=None):
     log.info("Running ExMR")
     results = _run_model(data, options, fps, assets)
     results["fps"] = fps
-    results |= compute_joints(results, assets.smplx)
-    _save_results(results, output_dir)
-    save_amass(results["smplx_global"], fps, output_dir / f"{name}_amass.npz", assets.smplx)
-    save_bvh(results["smplx_global"], fps, output_dir / f"{name}.bvh", assets.smplx)
+    smplx = SmplxModel(assets.smplx)
+    results |= compute_joints(results, smplx)
+    save_results(results, output_dir)
+    save_amass(results["smplx_global"], fps, output_dir / f"{name}_amass.npz", smplx)
+    save_bvh(results["smplx_global"], fps, output_dir / f"{name}.bvh", smplx)
 
     if options.render:
         log.info("Rendering")
-        _render(results, frame_dir, output_dir, name, fps, assets)
+        render(results, frame_dir, output_dir, name, fps, smplx.cuda())
     if not options.keep_frames:
         shutil.rmtree(frame_dir)
         if cut_path is not None:
@@ -148,18 +150,15 @@ def range_label(start, end):
     return f"{start or 0:g}-{end:g}s" if end is not None else f"{start or 0:g}s-end"
 
 
-def compute_joints(results, smplx_npz):
+def compute_joints(results, smplx):
     """The joints of results["smplx_incam"] and results["smplx_global"] (each (L, D)) and their
     projection into the image with results["K_fullimg"]: the keys joints_incam, joints_global,
-    joints_2d and joint_names of results.pt (see docs/OUTPUTS.md). Runs on the CPU (about a second
-    for 1000 frames).
+    joints_2d and joint_names of results.pt (see docs/OUTPUTS.md). About a second for 1000
+    frames on the CPU.
 
     Args:
-        smplx_npz: the SMPLX_NEUTRAL.npz of the parameters
+        smplx: a SmplxModel of the parameters (on the CPU, like the results)
     """
-    from exmr.body_models.smplx_model import SmplxModel
-
-    smplx = SmplxModel(smplx_npz)
     with torch.no_grad():
         incam, world = (smplx.joints(**results[key]) for key in ("smplx_incam", "smplx_global"))
     uvz = torch.einsum("lij,lkj->lki", results["K_fullimg"], incam)
@@ -206,10 +205,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
         return Tracker(assets.yolo(options.detector)).get_main_track(video_path).float()
 
     bbx_xyxy = _cached(cache / "tracks.pt", tracker_settings, track)  # (L, 4)
-    bbx_xys = bbx_xys_from_xyxy(bbx_xyxy, base_enlarge=1.2).float()  # (L, 3)
     K = estimate_K(width, height, options.f_mm)[None].repeat(L, 1, 1)  # (L, 3, 3)
-
-    threshold = VISIBILITY_THRESHOLD[backend]
 
     def keypoints():
         if backend == "sapiens2":
@@ -232,16 +228,9 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
     body_feat = _cached(cache / "body_features.pt", body_settings, body_features)
 
     def hand_features():
-        from exmr.preprocessing.hand_features import HamerHandFeatures, hand_boxes_from_keypoints
+        from exmr.preprocessing.hand_features import HamerHandFeatures
 
-        boxes = torch.stack(
-            [
-                hand_boxes_from_keypoints(kp2d[:, COCO63_LEFT_HAND], threshold),
-                hand_boxes_from_keypoints(kp2d[:, COCO63_RIGHT_HAND], threshold),
-            ],
-            dim=1,
-        )  # (L, 2, 4)
-        return HamerHandFeatures(assets.hamer)(frame_dir, boxes)
+        return HamerHandFeatures(assets.hamer)(frame_dir, hand_boxes(kp2d, backend))
 
     hand_feat = _cached(cache / "hand_features.pt", kp_settings, hand_features)
 
@@ -258,15 +247,38 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
 
         R_w2c = _cached(vo_cache, vo_settings, camera_rotations)
 
+    inputs = model_inputs(kp2d, bbx_xyxy, K, R_w2c, body_feat, hand_feat, backend)
+    return {**inputs, "bbx_xyxy": bbx_xyxy}
+
+
+def hand_boxes(kp2d, backend):
+    """(L, 2, 4) boxes [left, right] of the hands for HaMeR, from the (L, 63, 3) keypoints of the
+    pose backend ("sapiens2" or "rtmw")."""
+    from exmr.preprocessing.hand_features import hand_boxes_from_keypoints
+
+    threshold = VISIBILITY_THRESHOLD[backend]
+    return torch.stack(
+        [
+            hand_boxes_from_keypoints(kp2d[:, COCO63_LEFT_HAND], threshold),
+            hand_boxes_from_keypoints(kp2d[:, COCO63_RIGHT_HAND], threshold),
+        ],
+        dim=1,
+    )
+
+
+def model_inputs(kp2d, bbx_xyxy, K_fullimg, R_w2c, body_feat, hand_feat, backend):
+    """ExMR's inputs (see ExMR.forward, without the batch dimension) from the preprocessing
+    stages' outputs of one video: (L, 63, 3) keypoints of the pose backend ("sapiens2" or
+    "rtmw"), (L, 4) person boxes, (L, 3, 3) intrinsics, (L, 3, 3) world-to-camera rotations,
+    (L, 1024) SAM 3D Body and (L, 2, 1024) HaMeR features."""
     # body + foot keypoints; RTMW's raw scores become a binary visibility for the network
     kp23 = kp2d[:, COCO23].clone()
     if backend == "rtmw":
-        kp23[..., 2] = (kp23[..., 2] > threshold).to(kp23.dtype)
+        kp23[..., 2] = (kp23[..., 2] > VISIBILITY_THRESHOLD[backend]).to(kp23.dtype)
     return {
         "kp2d": kp23,
-        "bbx_xys": bbx_xys,
-        "bbx_xyxy": bbx_xyxy,
-        "K_fullimg": K,
+        "bbx_xys": bbx_xys_from_xyxy(bbx_xyxy, base_enlarge=1.2).float(),
+        "K_fullimg": K_fullimg,
         "cam_angvel": cam_angvel_from_rotations(R_w2c),
         "body_feat": body_feat,
         "hand_feat": hand_feat,
@@ -310,7 +322,9 @@ def _run_model(data, options, fps, assets):
     }
 
 
-def _save_results(results, output_dir):
+def save_results(results, output_dir):
+    """Save the results of run_video as <output_dir>/results.pt and results.npz (the same values
+    with flattened keys, e.g. smplx_global_transl), see docs/OUTPUTS.md."""
     _atomic_save(results, output_dir / "results.pt")
     flat = {}
     for key, value in results.items():
@@ -342,11 +356,12 @@ def _check_renderer():
         ) from e
 
 
-def _render(results, frame_dir, output_dir, name, fps, assets):
-    from exmr.body_models.smplx_model import SmplxModel
+def render(results, frame_dir, output_dir, name, fps, smplx):
+    """Render the results of run_video over the frames (frame_dir/%06d.jpg) and in the world
+    frame: <output_dir>/<name>_incam.mp4, <name>_global.mp4 and <name>_incam_global.mp4 (side
+    by side). smplx: a SmplxModel on the GPU."""
     from exmr.vis.render import render_videos
 
-    smplx = SmplxModel(assets.smplx).cuda()
     with torch.no_grad():
         verts_incam = smplx(**{k: v.cuda() for k, v in results["smplx_incam"].items()})
         verts_global = smplx(**{k: v.cuda() for k, v in results["smplx_global"].items()})

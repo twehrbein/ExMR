@@ -136,7 +136,9 @@ body_pose = results["smplx_global"]["body_pose"]  # (L, 63), see docs/OUTPUTS.md
 
 `Options` has the same settings as the demo's command-line options (default: `balanced` mode;
 `start` and `end` in seconds). The model files are read from `checkpoints/` (or
-`$EXMR_CHECKPOINT_DIR`).
+`$EXMR_CHECKPOINT_DIR`). `exmr.pipeline` also exposes the pieces `run_video` is built from, e.g.
+for a pipeline with preloaded models: `hand_boxes`, `model_inputs`, `compute_joints`,
+`save_results` and `render`.
 
 ## How it works
 
