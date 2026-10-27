@@ -32,7 +32,7 @@ conda env config vars set PYTHONNOUSERSITE=1
 conda activate exmr
 
 pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
-conda install -y -c conda-forge ffmpeg=7.1.1 libjpeg-turbo
+conda install -y -c conda-forge ffmpeg=9.0.2 libjpeg-turbo
 # constraints.txt pins the indirect dependencies too, to the validated versions
 pip install -r requirements.txt -c constraints.txt
 # HaMeR and Sapiens2 at the evaluated versions, without their (training) dependencies

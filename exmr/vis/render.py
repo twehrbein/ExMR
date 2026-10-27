@@ -1,9 +1,10 @@
 """Result videos: the SMPL-X mesh over the input video (camera view), in the world frame with a
-ground plane (world view), and both side by side."""
+ground plane (world view), and/or both side by side."""
 
 import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 
 import torch
@@ -16,49 +17,77 @@ from exmr.vis.renderer import Renderer, ground_params_from_points, world_view_ca
 from exmr.vis.video_writer import VideoWriter
 
 MESH_COLOR = [86.0 / 255.0, 180.0 / 255.0, 233.0 / 255.0]  # light blue
+# the videos: camera view, world view, both side by side
+VIEWS = ("incam", "global", "incam_global")
 
 
 @torch.no_grad()
 def render_videos(frame_dir, verts_incam, verts_global, faces, J_regressor, K, fps, out_paths):
-    """Render the camera view, the world view and both side by side in one pass.
+    """Render the camera view, the world view and/or both side by side in one pass.
 
     Args:
         frame_dir: the video's frames %06d.jpg
         verts_incam: (L, V, 3) mesh vertices in the camera frame, with intrinsics K (3, 3)
         verts_global: (L, V, 3) mesh vertices in the world frame
-        out_paths: the three videos [camera view, world view, side by side]
+        out_paths: {view: video path} for the views "incam" (camera view), "global" (world view)
+            and "incam_global" (both side by side); only the views needed are rendered
     """
+    if unknown := set(out_paths) - set(VIEWS):
+        raise ValueError(f"unknown views {sorted(unknown)}, expected some of {VIEWS}")
     frame_dir = Path(frame_dir)
     first = read_frame(frame_dir / "000000.jpg")
     # even sizes, for the videos' YUV 4:2:0 format (which stores colors per 2x2 pixels): an odd
     # last row or column is left out
     height, width = (s // 2 * 2 for s in first.shape[:2])
-    incam_renderer = Renderer(width, height, K=K, faces=faces)
-    world_renderer, ground, verts_world = _world_view(
-        verts_global, faces, J_regressor, width, height
-    )
+    incam_renderer = world_renderer = None
+    if out_paths.keys() & {"incam", "incam_global"}:
+        incam_renderer = Renderer(width, height, K=K, faces=faces)
+        frame_paths = [frame_dir / f"{i:06d}.jpg" for i in range(len(verts_incam))]
+        frames = _decoded_frames(frame_paths, height, width)
+    if out_paths.keys() & {"global", "incam_global"}:
+        world_renderer, ground, verts_world = _world_view(
+            verts_global, faces, J_regressor, width, height
+        )
 
     # write to temporary names, so that an interrupted run leaves no complete-looking videos
-    tmp_paths = [Path(p).with_name(Path(p).name + ".tmp.mp4") for p in out_paths]
-    # the side-by-side frame is written as is and cropped into the two views
-    crops = [(0, 0, width, height), (width, 0, width, height), None]
-    writer = VideoWriter(dict(zip(tmp_paths, crops)), fps=fps)
-    frame_paths = [frame_dir / f"{i:06d}.jpg" for i in range(len(verts_incam))]
-    # decode the JPEGs in background threads, up to 8 frames ahead of rendering
-    with ThreadPoolExecutor(4) as pool:
-        decoded = deque(pool.submit(read_frame, p) for p in frame_paths[:8])
-        for i in tqdm(range(len(frame_paths)), desc="Rendering"):
-            frame = torch.from_numpy(decoded.popleft().result()[:height, :width]).cuda()
-            if i + 8 < len(frame_paths):
-                decoded.append(pool.submit(read_frame, frame_paths[i + 8]))
-            incam = incam_renderer.render_mesh(verts_incam[i], frame, MESH_COLOR)
-            world = world_renderer.render_mesh(
-                verts_world[i], ground, MESH_COLOR, specular_color=(1.0, 1.0, 1.0)
+    tmp_paths = {
+        view: Path(p).with_name(Path(p).name + ".tmp.mp4") for view, p in out_paths.items()
+    }
+    with ExitStack() as stack:  # closes every writer, also on errors
+        writers = {
+            view: stack.enter_context(
+                VideoWriter(path, 2 * width if view == "incam_global" else width, height, fps=fps)
             )
-            writer.write_frame(torch.cat([incam, world], dim=1))
-    writer.close()
-    for tmp, path in zip(tmp_paths, out_paths):
-        os.replace(tmp, path)
+            for view, path in tmp_paths.items()
+        }
+        images = {}
+        for i in tqdm(range(len(verts_incam)), desc="Rendering"):
+            if incam_renderer is not None:
+                images["incam"] = incam_renderer.render_mesh(
+                    verts_incam[i], next(frames), MESH_COLOR
+                )
+            if world_renderer is not None:
+                images["global"] = world_renderer.render_mesh(
+                    verts_world[i], ground, MESH_COLOR, specular_color=(1.0, 1.0, 1.0)
+                )
+            if "incam_global" in writers:
+                images["incam_global"] = torch.cat([images["incam"], images["global"]], dim=1)
+            for view, writer in writers.items():
+                writer.write_frame(images[view])
+    for view, path in out_paths.items():
+        os.replace(tmp_paths[view], path)
+
+
+def _decoded_frames(frame_paths, height, width, ahead=8):
+    """The frames, cropped to height x width, on the GPU; decoded in background threads, up to
+    `ahead` frames ahead of their use."""
+    with ThreadPoolExecutor(4) as pool:
+        decoded = deque(pool.submit(read_frame, p) for p in frame_paths[:ahead])
+        for i in range(len(frame_paths)):
+            frame = decoded.popleft().result()[:height, :width]
+            if i + ahead < len(frame_paths):
+                decoded.append(pool.submit(read_frame, frame_paths[i + ahead]))
+            yield torch.from_numpy(frame).cuda()
 
 
 def _world_view(vertices, faces, J_regressor, width, height):

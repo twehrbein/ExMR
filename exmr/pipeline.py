@@ -356,10 +356,13 @@ def _check_renderer():
         ) from e
 
 
-def render(results, frame_dir, output_dir, name, fps, smplx):
+def render(
+    results, frame_dir, output_dir, name, fps, smplx, videos=("incam", "global", "incam_global")
+):
     """Render the results of run_video over the frames (frame_dir/%06d.jpg) and in the world
-    frame: <output_dir>/<name>_incam.mp4, <name>_global.mp4 and <name>_incam_global.mp4 (side
-    by side). smplx: a SmplxModel on the GPU."""
+    frame: <output_dir>/<name>_<video>.mp4 for the videos "incam" (camera view), "global" (world
+    view) and "incam_global" (both side by side); only the views needed are rendered. smplx: a
+    SmplxModel on the GPU."""
     from exmr.vis.render import render_videos
 
     with torch.no_grad():
@@ -368,7 +371,7 @@ def render(results, frame_dir, output_dir, name, fps, smplx):
     render_videos(
         frame_dir, verts_incam, verts_global, smplx.faces, smplx.J_regressor.cuda(),
         results["K_fullimg"][0], fps,
-        [output_dir / f"{name}_{view}.mp4" for view in ("incam", "global", "incam_global")],
+        {view: output_dir / f"{name}_{view}.mp4" for view in videos},
     )  # fmt: skip
 
 

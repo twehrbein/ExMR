@@ -20,8 +20,8 @@
   try ExMR in the browser, without installing anything.
 - **[2026-10-26]** [v0.1.4](https://github.com/twehrbein/ExMR/releases/tag/v0.1.4): 3D and 2D joints
   in the results, BVH export, FBX for Unity and Unreal (through Blender) and retargeting to humanoid
-  robots with [GMR](https://github.com/YanjieZe/GMR), see [outputs](docs/OUTPUTS.md); a faster demo
-  (`fast` 1:01, `balanced` 1:17, `accurate` 2:59 on an RTX 4090, from 1:09 / 1:23 / 3:22).
+  robots with [GMR](https://github.com/YanjieZe/GMR), see [outputs](docs/OUTPUTS.md); a demo about
+  10 % faster.
 - **[2026-10-22]** [v0.1.3](https://github.com/twehrbein/ExMR/releases/tag/v0.1.3): export for
   Blender (AMASS SMPL-X file), `--snap_to_ground` and temporal smoothing.
 - **[2026-10-21]** Demo code and model weights released.
@@ -78,9 +78,9 @@ on an RTX 4090, including model loading and rendering:
 
 | `--mode` | Person detector | 2D keypoints | Camera motion (moving camera) | Time |
 |---|---|---|---|---:|
-| `fast` | YOLO11m | RTMW-x | SimpleVO | 1&nbsp;min&nbsp;1&nbsp;s |
+| `fast` | YOLO11m | RTMW-x | SimpleVO | 1&nbsp;min&nbsp;3&nbsp;s |
 | `balanced` (default) | YOLO11m | Sapiens2-1B 448x336 | SimpleVO | 1&nbsp;min&nbsp;17&nbsp;s |
-| `accurate` | YOLO11x | Sapiens2-1B 1024x768 | DPVO | 2&nbsp;min&nbsp;59&nbsp;s |
+| `accurate` | YOLO11x | Sapiens2-1B 1024x768 | DPVO | 2&nbsp;min&nbsp;58&nbsp;s |
 
 In our evaluation, Sapiens2-1B gives nearly the same accuracy at 448x336 and 1024x768; RTMW-x is
 slightly less accurate, mostly for the feet. With `-s` (static camera), no mode estimates camera

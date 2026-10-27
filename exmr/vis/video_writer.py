@@ -2,16 +2,16 @@
 
 import queue
 import subprocess
+import tempfile
 import threading
 from fractions import Fraction
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
 from exmr.preprocessing.video import h264_args
 
-# NVENC's H.264 encoder rejects frames wider or taller than this
+# frames wider or taller than this are scaled down: H.264 levels and players top out around 4K
 MAX_SIZE = 4096
 # RGB -> YUV, BT.601 limited range (ffmpeg's default for yuv420p)
 RGB_TO_YUV = torch.tensor(
@@ -24,62 +24,74 @@ RGB_TO_YUV = torch.tensor(
 
 
 class VideoWriter:
-    """Encodes RGB uint8 (H, W, 3) frames (torch tensors, H and W even) into one or more videos,
-    each the whole frame or a crop of it, with a single ffmpeg subprocess. A background thread
-    feeds it, so write_frame returns immediately and encoding overlaps with rendering. Call
-    close() at the end.
+    """Encodes RGB uint8 (H, W, 3) frames (torch tensors) into a video with an ffmpeg subprocess.
+    A background thread feeds it, so write_frame returns immediately and encoding overlaps with
+    rendering. Call close() at the end, or use it as a context manager.
+
+    One video per writer (ffmpeg process) also keeps NVENC to one session per process: several
+    NVENC sessions in one ffmpeg process crash intermittently when they are destroyed at exit
+    (driver-side, seen with driver 610).
 
     Args:
-        outputs: {output path: crop (x, y, w, h) of the frame, or None for the whole frame}
+        width, height: the frame size, both even (the video's YUV 4:2:0 format needs it)
     """
 
-    def __init__(self, outputs, fps=30, crf=23, queue_size=8):
-        self.outputs, self.fps, self.crf = {str(p): c for p, c in outputs.items()}, fps, crf
-        self._proc = None  # started with the first frame, which gives the frame size
+    def __init__(self, path, width, height, fps=30, crf=23, queue_size=8):
+        self.path, self.width, self.height = str(path), width, height
+        self._stderr = tempfile.TemporaryFile()  # ffmpeg's messages, shown if it fails
+        self._proc = subprocess.Popen(
+            self._command(fps, crf), stdin=subprocess.PIPE, stderr=self._stderr, bufsize=0
+        )
         self._queue = queue.Queue(maxsize=queue_size)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
-        while (frame := self._queue.get()) is not None:
-            if self._proc is None:
-                h, w = frame.shape
-                self._proc = subprocess.Popen(
-                    self._command(h * 2 // 3, w), stdin=subprocess.PIPE, bufsize=0
-                )
-            # write the array's buffer directly: .tobytes() would copy every frame
-            self._proc.stdin.write(np.ascontiguousarray(frame, dtype=np.uint8))
-        if self._proc is not None:
-            self._proc.stdin.close()
-            self._proc.wait()
+        try:
+            while (frame := self._queue.get()) is not None:
+                self._proc.stdin.write(frame)  # the array's buffer, without a copy
+        except OSError:  # ffmpeg exited (broken pipe): close() reports its error
+            while self._queue.get() is not None:  # keep taking frames, so write_frame never blocks
+                pass
+        self._proc.stdin.close()
+        self._proc.wait()
 
-    def _command(self, h, w):
-        """ffmpeg command: raw h x w YUV 4:2:0 frames from stdin, split into the outputs"""
-        n = len(self.outputs)
-        graph = [f"[0:v]split={n}" + "".join(f"[in{i}]" for i in range(n))]
-        output_args = []
-        for i, (path, crop) in enumerate(self.outputs.items()):
-            x, y, cw, ch = crop or (0, 0, w, h)
-            filters = ([f"crop={cw}:{ch}:{x}:{y}"] if crop else []) + _scale_filter(cw, ch)
-            graph.append(f"[in{i}]{','.join(filters) or 'null'}[out{i}]")
-            output_args += ["-map", f"[out{i}]", *map(str, h264_args(self.crf)), path]
+    def _command(self, fps, crf):
+        """ffmpeg command: raw YUV 4:2:0 frames from stdin -> H.264 video"""
+        scale = _scale_filter(self.width, self.height)
         return [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-            "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{w}x{h}",
-            "-r", str(Fraction(self.fps).limit_denominator(1000)), "-i", "pipe:0",
-            "-filter_complex", ";".join(graph), *output_args,
+            "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{self.width}x{self.height}",
+            "-r", str(Fraction(fps).limit_denominator(1000)), "-i", "pipe:0",
+            *(["-vf", *scale] if scale else []), *map(str, h264_args(crf)), self.path,
         ]  # fmt: skip
 
     def write_frame(self, frame):
-        # converted to YUV 4:2:0 (the videos' format) on the frame's device, e.g. the GPU: this
+        if frame.shape[:2] != (self.height, self.width):
+            raise ValueError(f"frame {tuple(frame.shape)}, expected {self.height}x{self.width}")
+        # converted to YUV 4:2:0 (the video's format) on the frame's device, e.g. the GPU: this
         # halves the bytes copied to the CPU and piped to ffmpeg, which limit 4K videos
         self._queue.put(_rgb_to_yuv420(frame).cpu().numpy())
 
     def close(self):
         self._queue.put(None)
         self._thread.join()
-        if self._proc is not None and self._proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed to write {', '.join(self.outputs)}")
+        self._stderr.seek(0)
+        messages = self._stderr.read().decode(errors="replace").strip()
+        self._stderr.close()
+        if self._proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed (exit code {self._proc.returncode}) to write {self.path}:\n"
+                f"{messages}"
+            )
+        if messages:
+            print(messages)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
 
 def _rgb_to_yuv420(rgb):
