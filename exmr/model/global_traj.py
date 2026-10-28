@@ -18,6 +18,8 @@ STATIC_JOINT_IDS = [7, 10, 8, 11, 20, 21]
 # snap_to_ground: some body part touches the ground at least this often (seconds), about the hang
 # time of a jump (as in PRIMAL, Zhang et al., arXiv 2503.17544)
 CONTACT_INTERVAL = 0.5
+# static_joint_ik: a toe's IK target stays this close (m, per axis) to the network's toe
+TOE_TARGET_MAX_OFFSET = 0.03
 # static_cam_transl: the world root may deviate this far (m) from the camera-frame root before
 # the slow part of the deviation (Gaussian smoothing, sigma in seconds) is removed
 CAMERA_DEAD_BAND = 0.25
@@ -213,6 +215,13 @@ def static_joint_ik(smplx_global, static_conf_logits, decoder):
         a = torch.cat([a[:, :offset], a[:, offset:] * a[:, :-offset]], dim=1)
         offset *= 2
     post_target_j3d[:, :, STATIC_JOINT_IDS] = b
+    # a toe predicted static can lie far from where it was when its contact began; pulling it all
+    # the way back turns the ankle a lot (tens of degrees), against the network's ankle. Bounded
+    # per axis like FlowHMR's ankle targets (github.com/flowhmr/flowhmr, runtime_v2m_postprocess)
+    toes = [10, 11]
+    offset = post_target_j3d[:, :, toes] - post_w_j3d[:, :, toes]
+    offset = offset.clamp(-TOE_TARGET_MAX_OFFSET, TOE_TARGET_MAX_OFFSET)
+    post_target_j3d[:, :, toes] = post_w_j3d[:, :, toes] + offset
 
     parents = decoder.parents
     chains = [  # (chain, targets: joint ids, their indices within the chain)
