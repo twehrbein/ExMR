@@ -109,16 +109,10 @@ def run_video(video_path, output_dir, options=None, assets=None):
     elif options.fps30:
         video_path = _resample_to_30fps(video_path, output_dir)
     frame_dir = output_dir / "frames"
+    # every stage reads these frames, so all see the same images (ffmpeg applies the video's
+    # rotation and other display metadata) and the same frame count (also of variable frame rate
+    # videos)
     num_frames = _extract_frames(video_path, frame_dir)
-    if V.video_lwh(video_path)[0] != num_frames:
-        # the container's frame count disagrees with the decoded frames (variable frame rate or
-        # damaged container): rebuild a constant-frame-rate video from the frames, so that every
-        # reader sees the same frames
-        log.warning("Frame count mismatch, rebuilding a constant-frame-rate video")
-        cfr_path = output_dir / f"{video_path.stem}_cfr.mp4"
-        if not cfr_path.exists():
-            V.encode_frames(frame_dir, cfr_path, fps=V.video_fps(video_path))
-        video_path = cfr_path
     width, height = V.frame_size(frame_dir)
     fps = V.video_fps(video_path)
     log.info(f"{video_path}: {num_frames} frames, {width}x{height}, {fps:.2f} fps")
@@ -185,13 +179,13 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
         "f_mm": options.f_mm,
     }
 
-    # SimpleVO needs only the video and the CPU: it runs in a separate process while the GPU
+    # SimpleVO needs only the frames and the CPU: it runs in a separate process while the GPU
     # stages below run
     simplevo = None
     use_simplevo = options.vo == "simplevo" and not options.static_cam
     if use_simplevo and not _is_cached(vo_cache, vo_settings):
         log.info("Starting visual odometry in the background")
-        simplevo = _in_background(_simplevo_rotations, video_path, options.f_mm)
+        simplevo = _in_background(_simplevo_rotations, frame_dir, options.f_mm)
 
     # RTMW's session build and warm-up run in a thread while
     # the tracker runs, which hides about half of it
@@ -202,7 +196,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
     def track():
         from exmr.preprocessing.tracker import Tracker
 
-        return Tracker(assets.yolo(options.detector)).get_main_track(video_path).float()
+        return Tracker(assets.yolo(options.detector)).get_main_track(frame_dir).float()
 
     bbx_xyxy = _cached(cache / "tracks.pt", tracker_settings, track)  # (L, 4)
     K = estimate_K(width, height, options.f_mm)[None].repeat(L, 1, 1)  # (L, 3, 3)
@@ -242,7 +236,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
             from exmr.preprocessing.visual_odometry import DPVOOdometry
 
             if options.vo == "dpvo":
-                return DPVOOdometry(assets.dpvo)(video_path, K[0])
+                return DPVOOdometry(assets.dpvo)(frame_dir, K[0])
             return torch.from_numpy(simplevo.result())  # waits for SimpleVO to finish
 
         R_w2c = _cached(vo_cache, vo_settings, camera_rotations)
@@ -285,14 +279,14 @@ def model_inputs(kp2d, bbx_xyxy, K_fullimg, R_w2c, body_feat, hand_feat, backend
     }
 
 
-def _simplevo_rotations(video_path, f_mm=None):
+def _simplevo_rotations(frame_dir, f_mm=None):
     """SimpleVO's (L, 3, 3) camera rotations, as a numpy array: torch tensors would be returned
     from the separate process through shared memory. f_mm: the focal length (SimpleVO's default
     if None)."""
     from exmr.preprocessing.visual_odometry import SimpleVO
 
     vo = SimpleVO(progress=False) if f_mm is None else SimpleVO(f_mm=f_mm, progress=False)
-    return vo(video_path).numpy()
+    return vo(frame_dir).numpy()
 
 
 def _run_model(data, options, fps, assets):

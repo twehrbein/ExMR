@@ -12,14 +12,13 @@ import threading
 from pathlib import Path
 
 import cv2
-import imageio.v3 as iio
 import numpy as np
 import pycolmap
 import torch
 from tqdm import tqdm
 
 from exmr.geometry.rotation_conversions import quaternion_to_matrix
-from exmr.preprocessing.video import video_lwh
+from exmr.preprocessing.video import frame_paths, frame_size, read_frames
 
 DPVO_ROOT = Path(__file__).resolve().parents[2] / "third_party" / "DPVO"
 
@@ -39,28 +38,25 @@ class SimpleVO:
         self.scale, self.step, self.f_mm, self.progress = scale, step, f_mm, progress
         self.sift = cv2.SIFT_create()
 
-    def __call__(self, video_path):
-        """(L, 3, 3) world-to-camera rotations (float64), the first one identity."""
+    def __call__(self, frame_dir):
+        """frame_dir with %06d.jpg frames -> (L, 3, 3) world-to-camera rotations (float64), the
+        first one identity."""
         with _opencv_multithreading():
-            return torch.from_numpy(self.poses(video_path)[:, :3, :3])
+            return torch.from_numpy(self.poses(frame_dir)[:, :3, :3])
 
-    def poses(self, video_path):
+    def poses(self, frame_dir):
         """(L, 4, 4) world-to-camera transforms (float64), the first one identity."""
         _reset_random_state()
-        # keep only the frames that are matched, every step-th and the last one: all frames of a
-        # long video would not fit into memory
-        frames = {}  # frame index -> (H, W, 3) RGB
-        reader = iio.imiter(
-            video_path,
-            plugin="pyav",
-            thread_type="FRAME",
-            filter_sequence=[("scale", f"iw*{self.scale}:ih*{self.scale}")],
-        )
-        for i, frame in enumerate(reader):
-            if i % self.step == 0:
-                frames[i] = frame
-        frames[i] = frame  # the last frame
-        sample_idxs, frames = list(frames), list(frames.values())
+        # only the frames that are matched are read: every step-th and the last one
+        paths = frame_paths(frame_dir)
+        sample_idxs = sorted({*range(0, len(paths), self.step), len(paths) - 1})
+        frames = [  # (H, W, 3) RGB
+            cv2.cvtColor(
+                cv2.resize(img, None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_AREA),
+                cv2.COLOR_BGR2RGB,
+            )
+            for img in read_frames([paths[i] for i in sample_idxs])
+        ]
         H, W = frames[0].shape[:2]
 
         # pinhole camera with the principal point at the center
@@ -155,28 +151,29 @@ class DPVOOdometry:
             checkpoint, resize, max_side, buffer
         )  # fmt: skip
 
-    def __call__(self, video_path, K):
-        """video and its (3, 3) intrinsics -> (L, 3, 3) world-to-camera rotations (float32)"""
+    def __call__(self, frame_dir, K):
+        """frame_dir with %06d.jpg frames and their (3, 3) intrinsics -> (L, 3, 3) world-to-camera
+        rotations (float32)"""
         from dpvo.config import cfg
         from dpvo.dpvo import DPVO
 
         intrinsics = torch.stack([K[0, 0], K[1, 1], K[0, 2], K[1, 2]]).float()  # fx, fy, cx, cy
-        L, width, height = video_lwh(video_path)
-        resize = min(self.resize, self.max_side / max(width, height))
-        # frames are decoded in a background thread (OpenCV releases the GIL), overlapping with
+        paths = frame_paths(frame_dir)
+        resize = min(self.resize, self.max_side / max(frame_size(frame_dir)))
+        # frames are decoded in background threads (OpenCV releases the GIL), overlapping with
         # DPVO on the GPU. A thread rather than a process: importing dpvo switches the
         # multiprocessing start method to "spawn" for the whole interpreter.
         frames = queue.Queue(maxsize=8)
         stop = threading.Event()
         reader = threading.Thread(
-            target=_dpvo_video_stream,
-            args=(frames, stop, str(video_path), intrinsics, resize),
+            target=_dpvo_frame_stream,
+            args=(frames, stop, paths, intrinsics, resize),
             daemon=True,
         )
         reader.start()
 
         slam = None
-        pbar = tqdm(total=L, desc="DPVO")
+        pbar = tqdm(total=len(paths), desc="DPVO")
         # no_grad is essential: DPVO writes network outputs into persistent buffers, which
         # would otherwise keep every frame's autograd graph alive (memory grows ~0.25 GB/frame)
         try:
@@ -234,7 +231,7 @@ def _dpvo_terminate(slam):
     return lietorch.stack(poses, dim=0).inv().data.cpu().numpy()
 
 
-def _dpvo_video_stream(frames, stop, video_path, intrinsics, resize):
+def _dpvo_frame_stream(frames, stop, paths, intrinsics, resize):
     """Puts (frame index, downscaled BGR frame cropped to multiples of 16, intrinsics) into the
     frames queue, then None at the end (or the exception, if reading fails)."""
 
@@ -246,22 +243,16 @@ def _dpvo_video_stream(frames, stop, video_path, intrinsics, resize):
             except queue.Full:
                 pass
 
-    cap = cv2.VideoCapture(video_path)
     try:
-        t = 0
-        while not stop.is_set():
-            ret, frame = cap.read()
-            if not ret:
+        for t, frame in enumerate(read_frames(paths)):
+            if stop.is_set():
                 break
             image = cv2.resize(frame, None, fx=resize, fy=resize, interpolation=cv2.INTER_AREA)
             h, w, _ = image.shape
             put((t, image[: h - h % 16, : w - w % 16], intrinsics * resize))
-            t += 1
         put(None)
     except Exception as error:
         put(error)
-    finally:
-        cap.release()
 
 
 def _interpolate_poses(T_w2c, sample_idxs):

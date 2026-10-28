@@ -1,11 +1,12 @@
 """Video probing, frame extraction and re-encoding (ffmpeg / PyAV / TurboJPEG)."""
 
+import collections
 import functools
 import math
 import re
 import shutil
 import subprocess
-from fractions import Fraction
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import av
@@ -36,7 +37,34 @@ def extract_frames(video_path, output_dir, quality=2):
         ["-i", video_path, "-fps_mode", "passthrough", "-q:v", quality, "-start_number", 0,
          output_dir / "%06d.jpg"]
     )  # fmt: skip
-    return sum(1 for p in output_dir.glob("*.jpg") if re.fullmatch(r"\d{6}", p.stem))
+    return len(frame_paths(output_dir))
+
+
+def frame_paths(frame_dir):
+    """The extracted frames' files frame_dir/%06d.jpg, in order."""
+    return sorted(p for p in Path(frame_dir).glob("*.jpg") if re.fullmatch(r"\d{6}", p.stem))
+
+
+def read_frames(paths, threads=8):
+    """Yields the (H, W, 3) BGR uint8 images of the JPEG files paths, in order, decoded by a pool
+    of threads (OpenCV releases the GIL) at most 2 * threads frames ahead. One thread decodes
+    1080p JPEGs at ~200 frames/s, a fifth of OpenCV's video decoding; 8 decode them as fast, 4K
+    ones twice as fast."""
+    with ThreadPoolExecutor(threads) as pool:
+        pending = collections.deque()
+        for path in paths:
+            pending.append(pool.submit(_imread, path))
+            if len(pending) > 2 * threads:
+                yield pending.popleft().result()
+        while pending:
+            yield pending.popleft().result()
+
+
+def _imread(path):
+    img = cv2.imread(str(path))
+    if img is None:
+        raise RuntimeError(f"Could not read {path}")
+    return img
 
 
 def frame_size(frame_dir):
@@ -118,20 +146,6 @@ def h264_args(crf):
     else:
         codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", crf]
     return [*codec, "-pix_fmt", "yuv420p"]
-
-
-def encode_frames(frame_dir, out_path, fps, crf=17):
-    """frame_dir/%06d.jpg -> constant-frame-rate H.264 video with exactly that many frames.
-
-    Used to rebuild variable-frame-rate or damaged videos, whose container frame count disagrees
-    with the frames ffmpeg decodes, so that every reader sees the same frames.
-    """
-    fps = Fraction(fps).limit_denominator(1000)
-    _run_ffmpeg(
-        ["-framerate", fps, "-start_number", 0, "-i", Path(frame_dir) / "%06d.jpg",
-         *h264_args(crf), out_path]
-    )  # fmt: skip
-    return out_path
 
 
 def resample_fps(in_path, out_path, fps=30, crf=17):

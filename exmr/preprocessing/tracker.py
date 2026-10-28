@@ -1,5 +1,6 @@
 """Person detection and tracking (YOLO11 + ByteTrack); keeps the most prominent person."""
 
+import math
 import queue
 import threading
 from collections import defaultdict
@@ -10,11 +11,12 @@ from tqdm import tqdm
 from ultralytics import YOLO
 
 from exmr.geometry.smoothing import moving_average_smooth
-from exmr.preprocessing.video import video_lwh
+from exmr.preprocessing.video import frame_paths, frame_size, read_frames
 
 
 class Tracker:
-    """Tracks all people in a video and returns the boxes of the most prominent one.
+    """Tracks all people in a video's extracted frames and returns the boxes of the most
+    prominent one.
 
     Args:
         checkpoint: YOLO11 detection weights (yolo11m.pt is fast, yolo11x.pt more accurate)
@@ -22,14 +24,17 @@ class Tracker:
 
     def __init__(self, checkpoint):
         self.yolo = YOLO(checkpoint)
-        # decode the video in a background thread while the detector runs
-        self.yolo.add_callback("on_predict_start", _start_video_prefetch)
-        self.yolo.add_callback("on_predict_end", _close_video_prefetch)
+        self._frame_dir = None
+        # decode the frames in background threads while the detector runs
+        self.yolo.add_callback("on_predict_start", self._start_prefetch)
+        self.yolo.add_callback("on_predict_end", _close_prefetch)
 
-    def track(self, video_path):
-        """Per frame, a list of {"id": track id, "bbx_xyxy": (4,) array} detections."""
+    def track(self, frame_dir):
+        """frame_dir with %06d.jpg frames -> per frame, a list of {"id": track id,
+        "bbx_xyxy": (4,) array} detections."""
+        self._frame_dir = frame_dir
         results = self.yolo.track(
-            video_path,
+            str(frame_dir),
             device="cuda",
             conf=0.5,
             classes=0,  # person
@@ -42,12 +47,12 @@ class Tracker:
             # on the CPU and dominates this stage, while we only need the main person's boxes
             tracker="bytetrack.yaml",
         )
-        # skip Ultralytics' warm-up: its 640x640 dummy image has a shape that the video's frames
+        # skip Ultralytics' warm-up: its 640x640 dummy image has a shape that the frames
         # never have, and cuDNN 9 spends ~1 s setting up each new input shape
         self.yolo.predictor.done_warmup = True
         track_history = []
         try:
-            for result in tqdm(results, total=video_lwh(video_path)[0], desc="Tracking"):
+            for result in tqdm(results, total=len(frame_paths(frame_dir)), desc="Tracking"):
                 frame = []
                 if result.boxes.id is not None:
                     track_ids = result.boxes.id.int().cpu().tolist()
@@ -58,21 +63,26 @@ class Tracker:
             try:
                 results.close()
             finally:
-                _close_video_prefetch(self.yolo.predictor)
+                _close_prefetch(self.yolo.predictor)
         return track_history
 
-    def get_main_track(self, video_path):
+    def _start_prefetch(self, predictor):
+        if predictor.dataset.mode != "image":
+            raise ValueError("Tracker prefetch expects a directory of frames")
+        predictor.dataset = _PrefetchFrames(predictor.dataset, self._frame_dir)
+
+    def get_main_track(self, frame_dir):
         """(L, 4) bounding boxes [x1, y1, x2, y2] of the most prominent person, i.e. the track
         with the largest summed box area; frames where it is missing are interpolated."""
-        L, w, h = video_lwh(video_path)
+        L, (w, h) = len(frame_paths(frame_dir)), frame_size(frame_dir)
         id_to_frame_ids = defaultdict(list)
         id_to_bbx_xyxys = defaultdict(list)
-        for frame_id, frame in enumerate(self.track(video_path)):
+        for frame_id, frame in enumerate(self.track(frame_dir)):
             for det in frame:
                 id_to_frame_ids[det["id"]].append(frame_id)
                 id_to_bbx_xyxys[det["id"]].append(det["bbx_xyxy"])
         if not id_to_frame_ids:
-            raise RuntimeError(f"No person detected in {video_path}")
+            raise RuntimeError(f"No person detected in {frame_dir}")
 
         def area_sum(track_id):
             boxes = np.array(id_to_bbx_xyxys[track_id])
@@ -120,12 +130,14 @@ def _runs_of_true(mask):
     return [torch.arange(s, e) for s, e in zip(starts, ends)]
 
 
-class _PrefetchVideo:
-    """Wraps ultralytics' video loader to decode in a background thread (at most two batches
-    ahead). Only the worker thread touches the OpenCV capture; batches are consumed in order."""
+class _PrefetchFrames:
+    """Replaces ultralytics' image loader: decodes the frames of frame_dir in background threads
+    (at most two batches ahead); batches are consumed in order. Every frame gets frame_dir as its
+    path, like the frames of a video: ultralytics resets the tracker whenever the path changes."""
 
-    def __init__(self, loader):
-        self.loader = loader
+    def __init__(self, loader, frame_dir):
+        self.loader, self.frame_dir = loader, str(frame_dir)
+        self._paths = frame_paths(frame_dir)
         self._pending = queue.Queue(maxsize=2)
         self._stop = threading.Event()
         self._thread = None
@@ -134,7 +146,7 @@ class _PrefetchVideo:
         return getattr(self.loader, name)
 
     def __len__(self):
-        return len(self.loader)
+        return math.ceil(len(self._paths) / self.loader.bs)  # number of batches
 
     def _put(self, item):
         while not self._stop.is_set():
@@ -146,18 +158,24 @@ class _PrefetchVideo:
 
     def _decode(self):
         try:
-            for batch in self.loader:
+            imgs = []
+            for img in read_frames(self._paths):
                 if self._stop.is_set():
                     break
-                self._put((True, batch))
+                imgs.append(img)
+                if len(imgs) == self.loader.bs:
+                    self._put_batch(imgs)
+                    imgs = []
+            if imgs and not self._stop.is_set():
+                self._put_batch(imgs)
         except Exception as error:
             self._put((False, error))
         finally:
-            try:
-                if self.loader.cap is not None:
-                    self.loader.cap.release()
-            finally:
-                self._put((True, None))
+            self._put((True, None))
+
+    def _put_batch(self, imgs):
+        """(paths, BGR images, info strings), like ultralytics' loaders"""
+        self._put((True, ([self.frame_dir] * len(imgs), imgs, [""] * len(imgs))))
 
     def __iter__(self):
         if self._thread is None and not self._stop.is_set():
@@ -184,9 +202,7 @@ class _PrefetchVideo:
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():
-                raise RuntimeError("Video decoder did not stop within five seconds")
-        elif self.loader.cap is not None:
-            self.loader.cap.release()
+                raise RuntimeError("Frame decoder did not stop within five seconds")
         while True:  # release queued frames even if inference exited early
             try:
                 self._pending.get_nowait()
@@ -194,13 +210,6 @@ class _PrefetchVideo:
                 break
 
 
-def _start_video_prefetch(predictor):
-    loader = predictor.dataset
-    if loader.nf != 1 or loader.mode != "video":
-        raise ValueError("Tracker decode prefetch expects exactly one video file")
-    predictor.dataset = _PrefetchVideo(loader)
-
-
-def _close_video_prefetch(predictor):
-    if isinstance(getattr(predictor, "dataset", None), _PrefetchVideo):
+def _close_prefetch(predictor):
+    if isinstance(getattr(predictor, "dataset", None), _PrefetchFrames):
         predictor.dataset.close()
