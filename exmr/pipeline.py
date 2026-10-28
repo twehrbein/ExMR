@@ -166,7 +166,14 @@ def compute_joints(results, smplx):
 
 def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache):
     detector = assets.yolo(options.detector).name
-    tracker_settings = {"video": str(video_path), "frames": L, "detector": detector}
+    # the ExMR version in every stage's settings: a new version recomputes the cached stages, whose
+    # code may have changed (e.g. 0.1.4's tracker and VO read rotated videos sideways)
+    tracker_settings = {
+        "video": str(video_path),
+        "frames": L,
+        "detector": detector,
+        "exmr": __version__,
+    }
     backend = options.pose_backend
     kp_settings = {**tracker_settings, "pose_backend": backend}
     if backend == "sapiens2":
@@ -177,6 +184,7 @@ def _preprocess(video_path, frame_dir, L, width, height, options, assets, cache)
         "frames": L,
         "odometry": options.vo,
         "f_mm": options.f_mm,
+        "exmr": __version__,
     }
 
     # SimpleVO needs only the frames and the CPU: it runs in a separate process while the GPU
