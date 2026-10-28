@@ -55,10 +55,10 @@ python tools/demo.py --video path/to/video.mp4 -s   # static camera (better worl
 ```
 
 For example, download the [dancing video](https://www.pexels.com/video/woman-doing-dancing-exercise-in-the-garden-3690649/)
-from Pexels (1906x1080, filmed with a static camera) and run
+from Pexels (1906x1080, filmed with a static camera; the ground is flat) and run
 
 ```bash
-python tools/demo.py --video 3690649-hd_1906_1080_30fps.mp4 -s
+python tools/demo.py --video 3690649-hd_1906_1080_30fps.mp4 -s --snap_to_ground
 ```
 
 ![Demo output on the example video: SMPL-X in the camera view (left) and in the gravity-aligned world frame (right)](assets/demo.gif)
