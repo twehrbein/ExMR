@@ -4,7 +4,7 @@ docs/OUTPUTS.md)."""
 
 import numpy as np
 import torch
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
 from exmr.geometry.rotation_conversions import axis_angle_to_matrix, matrix_to_axis_angle
 
@@ -35,6 +35,36 @@ BVH_END_SITES = {
     },
 }
 CHIN_VERTEX = 8750  # a vertex of the SMPL-X mesh, on the chin's midline
+
+
+def resample_motion(smplx_params, fps, out_fps):
+    """The motion (SMPL-X parameters, each (L, D)) at another frame rate, over the same time:
+    frames every 1/out_fps seconds from the first one, rotations interpolated on the sphere
+    (slerp), the translation linearly."""
+    L = len(smplx_params["transl"])
+    t_in = np.arange(L) / fps
+    n = int(np.floor((L - 1) / fps * out_fps + 1e-6)) + 1
+    t_out = np.minimum(np.arange(n) / out_fps, t_in[-1])
+    out = {}
+    for key, value in smplx_params.items():
+        v = value.detach().cpu().double().numpy()
+        if key == "betas":  # the same in all frames
+            res = np.repeat(v[:1], n, axis=0)
+        elif key == "transl":
+            res = np.stack([np.interp(t_out, t_in, v[:, d]) for d in range(v.shape[1])], -1)
+        elif L == 1:
+            res = np.repeat(v, n, axis=0)
+        else:  # axis-angle rotations (L, 3 * J)
+            rotvecs = v.reshape(L, -1, 3)
+            res = np.stack(
+                [
+                    Slerp(t_in, Rotation.from_rotvec(r))(t_out).as_rotvec()
+                    for r in rotvecs.swapaxes(0, 1)
+                ],
+                axis=1,
+            ).reshape(n, -1)
+        out[key] = torch.from_numpy(res).to(value.dtype)
+    return out
 
 
 def save_amass(smplx_params, fps, path, smplx):

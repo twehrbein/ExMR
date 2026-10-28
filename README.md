@@ -108,6 +108,9 @@ Other options:
   a jump; this option moves the world-frame motion vertically so that it does, as in
   [PRIMAL](https://arxiv.org/abs/2503.17544). Jumps with a longer flight are pulled down. The
   demo suggests this option when the feet end up far above the ground where they touch it.
+* `--export_fps`: frame rate of the exported motion (`<name>_amass.npz`, `<name>.bvh`), e.g. 24 for
+  film or 60 for games, resampled from the video's (default). The other outputs keep the video's
+  frames.
 * `--smoothing {global,both,none}`: temporal smoothing of the output motion (Gaussian, ~33 ms).
   By default (`global`) only the world-frame motion is smoothed; the camera-frame motion stays
   raw, best aligned with the image. `both` also smooths the camera-frame motion (smoother, but

@@ -97,6 +97,13 @@ def main():
         "when the feet end up far above the ground.",
     )
     parser.add_argument(
+        "--export_fps",
+        type=float,
+        help="frame rate of the exported motion (<video name>_amass.npz and .bvh), e.g. 24 for "
+        "film or 60 for games: resampled from the video's (rotations interpolated on the "
+        "sphere). Default: the video's frame rate. The other outputs keep the video's frames.",
+    )
+    parser.add_argument(
         "--smoothing",
         choices=["global", "both", "none"],
         default="global",
@@ -128,6 +135,8 @@ def main():
         parser.error("--end must be after --start")
     if args.f_mm is not None and args.f_mm <= 0:
         parser.error("--f_mm must be > 0")
+    if args.export_fps is not None and args.export_fps <= 0:
+        parser.error("--export_fps must be > 0")
     # the preset, with the explicitly given parts replaced
     settings = {k: getattr(args, k) or v for k, v in PRESETS[args.mode].items()}
     keypoints = (
@@ -153,6 +162,7 @@ def main():
         f_mm=args.f_mm,
         fps30=args.fps30,
         snap_to_ground=args.snap_to_ground,
+        export_fps=args.export_fps,
         smoothing=args.smoothing,
         render=not args.no_render,
         keep_frames=args.keep_frames,

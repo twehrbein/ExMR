@@ -22,7 +22,7 @@ import torch
 from exmr import __version__
 from exmr.assets import RTMW_SHA256, Assets
 from exmr.body_models.smplx_model import SmplxModel
-from exmr.export import save_amass, save_bvh
+from exmr.export import resample_motion, save_amass, save_bvh
 from exmr.geometry.camera import bbx_xys_from_xyxy, cam_angvel_from_rotations, estimate_K
 from exmr.preprocessing import video as V
 from exmr.preprocessing.keypoints import VISIBILITY_THRESHOLD, detect_keypoints
@@ -47,6 +47,7 @@ class Options:
     f_mm: float | None = None  # the camera's focal length (mm, full-frame equivalent), if known
     fps30: bool = False  # resample to 30 fps first (usually not needed; faster for e.g. 60 fps)
     snap_to_ground: bool = False  # flat ground, nothing to stand on: no vertical drift
+    export_fps: float | None = None  # frame rate of the AMASS and BVH files (None: the video's)
     smoothing: str = "global"  # smooth the motion over time: "global" (world frame), "both", "none"
     render: bool = True
     keep_frames: bool = False  # keep the extracted JPEG frames
@@ -67,6 +68,8 @@ class Options:
             raise ValueError("Options.end must be after Options.start")
         if self.f_mm is not None and self.f_mm <= 0:
             raise ValueError("Options.f_mm must be > 0")
+        if self.export_fps is not None and self.export_fps <= 0:
+            raise ValueError("Options.export_fps must be > 0")
 
 
 def run_video(video_path, output_dir, options=None, assets=None):
@@ -129,8 +132,12 @@ def run_video(video_path, output_dir, options=None, assets=None):
     smplx = SmplxModel(assets.smplx)
     results |= compute_joints(results, smplx)
     save_results(results, output_dir)
-    save_amass(results["smplx_global"], fps, output_dir / f"{name}_amass.npz", smplx)
-    save_bvh(results["smplx_global"], fps, output_dir / f"{name}.bvh", smplx)
+    motion, export_fps = results["smplx_global"], fps
+    if options.export_fps:
+        motion = resample_motion(motion, fps, options.export_fps)
+        export_fps = options.export_fps
+    save_amass(motion, export_fps, output_dir / f"{name}_amass.npz", smplx)
+    save_bvh(motion, export_fps, output_dir / f"{name}.bvh", smplx)
 
     if options.render:
         log.info("Rendering")

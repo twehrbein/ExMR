@@ -119,7 +119,8 @@ of [AMASS](https://amass.is.tue.mpg.de), which the SMPL-X Blender add-on imports
    select the file. The default settings fit (Format: AMASS, Hand pose reference: Flat).
 3. Set "Target framerate" to the file's frame rate (`mocap_frame_rate`) or a divisor of it, e.g. 25
    for a 25 fps video: the add-on rejects targets above the frame rate and otherwise keeps every
-   (frame rate / target)-th frame, rounded down. Its default of 30 suits 30 and 60 fps videos.
+   (frame rate / target)-th frame, rounded down. Its default of 30 suits 30 and 60 fps videos,
+   and files exported with `--export_fps 30`.
 4. For the exact SMPL-X mesh, enable "Use keyframed corrective pose weights" (slower import and
    playback). Without it, the skeleton moves the same, but the mesh lacks SMPL-X's pose-dependent
    shape corrections.
@@ -168,7 +169,9 @@ the motion on another character in Blender, Maya or MotionBuilder:
   `left_hip`, ...), with end sites at the big toes, the fingertips, the chin and the eyes
 - the skeleton in the SMPL-X rest pose (a T-pose) of the person's body shape, in centimeters, y up
 - one frame per video frame (`Frame Time`: 1 / frame rate); in every frame, the joints are at
-  `joints_global` of `results.pt` (in meters there)
+  `joints_global` of `results.pt` (in meters there). With `--export_fps`, the frames are resampled
+  to that rate instead (also in `<name>_amass.npz`), e.g. 24 fps for film: the rotations are
+  interpolated on the sphere (slerp), the root position linearly
 - the root (`pelvis`) with absolute positions; the rotation order of the pelvis, shoulders, elbows
   and ankles differs from the others' XYZ, which keeps them away from gimbal lock, and the angles
   do not jump by 360 degrees between frames
@@ -207,7 +210,7 @@ python scripts/smplx_to_robot.py --smplx_file <name>_amass.npz --robot unitree_g
   if the scene allows it (see the [README](../README.md)): otherwise vertical drift of the
   world-frame motion lets the robot float or sink.
 - GMR treats motions below 30 fps as 30 fps motions without resampling them, so e.g. a 25 fps
-  motion plays too fast. For videos below 30 fps, run ExMR with `--fps30`.
+  motion plays too fast. For videos below 30 fps, run ExMR with `--export_fps 30`.
 - GMR retargets the body only and ignores the finger motion, also for robots with hands. For robot
   hands, the [joints](#joints) contain per hand the wrist, the three finger joints and the
   fingertip of every finger: the 21 hand keypoints (in another order) that hand retargeting tools
