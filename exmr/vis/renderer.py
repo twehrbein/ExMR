@@ -46,6 +46,10 @@ class Renderer:
         rgb = (AMBIENT + DIFFUSE * cos.clamp(min=0)) * color + SPECULAR * specular
         return torch.where(rast[0, ..., 3:] > 0, (rgb * 255).to(torch.uint8), background)
 
+    def coverage(self, vertices):
+        """Where the mesh (V, 3) in the camera frame covers the image: (H, W, 1) bool."""
+        return self._rasterize(vertices, self.faces)[0, ..., 3:] > 0
+
     def render_ground(self, R, T, length, center_x, center_z):
         """A checkerboard ground (side length, center in the xz-plane of the world frame) seen
         with the world-to-camera rotation R (3, 3) and translation T (3,), white where there is

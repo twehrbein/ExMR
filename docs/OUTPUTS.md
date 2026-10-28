@@ -10,7 +10,7 @@
 | `<name>_amass.npz` | the world-frame motion as an AMASS SMPL-X file, e.g. for [Blender](#blender-and-amass), [Unity and Unreal](#fbx-for-unity-and-unreal) or [humanoid robots](#humanoid-robots-gmr) |
 | `<name>.bvh` | the world-frame motion as a [BVH](#bvh) skeleton animation (centimeters), e.g. for animation software |
 | `<name>_incam.mp4` | SMPL-X mesh rendered over the input video |
-| `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane, seen by a static camera |
+| `<name>_global.mp4` | SMPL-X mesh in the world frame, with a ground plane and the mesh's shadow straight down on it (a gap between a foot and its shadow: the foot is above the ground), seen by a static camera |
 | `<name>_incam_global.mp4` | both side by side (scaled down to at most 4096 pixels wide) |
 | `cache/` | cached preprocessing results (reused when the demo is run again with the same settings) |
 | `run.json` | the video and options of the run (e.g. `smoothing`, `start`, `end`) |

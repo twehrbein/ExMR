@@ -17,6 +17,9 @@ from exmr.vis.renderer import Renderer, ground_params_from_points, world_view_ca
 from exmr.vis.video_writer import VideoWriter
 
 MESH_COLOR = [86.0 / 255.0, 180.0 / 255.0, 233.0 / 255.0]  # light blue
+# world view: the mesh's shadow straight down on the ground, which shows its height above it; the
+# ground's brightness in the shadow
+SHADOW_BRIGHTNESS = 0.6
 # the videos: camera view, world view, both side by side
 VIEWS = ("incam", "global", "incam_global")
 
@@ -45,7 +48,7 @@ def render_videos(frame_dir, verts_incam, verts_global, faces, J_regressor, K, f
         frame_paths = [frame_dir / f"{i:06d}.jpg" for i in range(len(verts_incam))]
         frames = _decoded_frames(frame_paths, height, width)
     if out_paths.keys() & {"global", "incam_global"}:
-        world_renderer, ground, verts_world = _world_view(
+        world_renderer, ground, verts_world, R, T = _world_view(
             verts_global, faces, J_regressor, width, height
         )
 
@@ -67,8 +70,18 @@ def render_videos(frame_dir, verts_incam, verts_global, faces, J_regressor, K, f
                     verts_incam[i], next(frames), MESH_COLOR
                 )
             if world_renderer is not None:
+                shadow = verts_world[i].clone()
+                shadow[:, 1] = 0.002  # just above the ground
+                # unlit: the flattened mesh's normals point anywhere
+                covered = world_renderer.coverage(shadow @ R.mT + T)
+                background = torch.where(
+                    covered, (ground * SHADOW_BRIGHTNESS).to(torch.uint8), ground
+                )
                 images["global"] = world_renderer.render_mesh(
-                    verts_world[i], ground, MESH_COLOR, specular_color=(1.0, 1.0, 1.0)
+                    verts_world[i] @ R.mT + T,
+                    background,
+                    MESH_COLOR,
+                    specular_color=(1.0, 1.0, 1.0),
                 )
             if "incam_global" in writers:
                 images["incam_global"] = torch.cat([images["incam"], images["global"]], dim=1)
@@ -92,11 +105,12 @@ def _decoded_frames(frame_paths, height, width, ahead=8):
 
 def _world_view(vertices, faces, J_regressor, width, height):
     """The world view of the world-frame vertices (L, V, 3): a static camera looks from the side
-    at the motion, which starts at the origin, facing +z. Returns its renderer, the ground image
-    and the vertices in its camera frame.
+    at the motion, which starts at the origin, facing +z. Returns its renderer, the ground image,
+    the vertices moved there and the camera's world-to-camera rotation R and translation T.
 
     As the camera is static, the ground is rendered only once, and each frame renders only the
-    mesh over it. The ground never hides the mesh, as the camera and all vertices are above it.
+    mesh's shadow and the mesh over it. The ground never hides the mesh, as the camera is above
+    it and the mesh is drawn over it (also a part dipping below it).
     """
     vertices = _move_to_start_point_face_z(vertices, J_regressor)
     joints = torch.einsum("jv,lvc->ljc", J_regressor, vertices)  # (L, J, 3)
@@ -109,15 +123,16 @@ def _world_view(vertices, faces, J_regressor, width, height):
     # the light is at the camera
     renderer = Renderer(width, height, K=K, faces=faces, light_location=(0.0, 0.0, 0.0))
     ground = renderer.render_ground(R, T, scale * 1.5, cx, cz)
-    return renderer, ground, vertices @ R.mT + T
+    return renderer, ground, vertices, R, T
 
 
 def _move_to_start_point_face_z(verts, J_regressor):
-    """Translate verts (L, V, 3) so that the first frame's root is at the origin (xz) and the
-    lowest vertex on the ground (y=0), then rotate about y so that the first frame faces +z."""
+    """Translate verts (L, V, 3) so that the first frame's root is at the origin (xz), then
+    rotate about y so that the first frame faces +z. The height stays: the ground (y=0) is the
+    results' (ExMR's world-frame results already start like this)."""
     verts = verts.clone()
     offset = (J_regressor @ verts[0])[0]  # first-frame root joint
-    offset[1] = verts[:, :, 1].min()
+    offset[1] = 0
     verts = verts - offset
 
     joints = (J_regressor @ verts[0])[None]  # (1, J, 3)
