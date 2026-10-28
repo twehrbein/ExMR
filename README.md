@@ -16,6 +16,10 @@
 
 ## News
 
+- **[2026-10-29]** [v0.1.5](https://github.com/twehrbein/ExMR/releases/tag/v0.1.5): fixes for
+  portrait phone videos (the mesh was beside the person) and for ffmpeg crashing at the end of a run;
+  foot contacts in the results, `--export_fps` (e.g. 24 or 30 fps exports), a world-frame motion that
+  starts facing +z, the mesh's shadow in the world view and world-frame ankles closer to the network's.
 - **[2026-10-26]** Online demo on [Hugging Face Spaces](https://huggingface.co/spaces/twehrbein/ExMR):
   try ExMR in the browser, without installing anything.
 - **[2026-10-26]** [v0.1.4](https://github.com/twehrbein/ExMR/releases/tag/v0.1.4): 3D and 2D joints
