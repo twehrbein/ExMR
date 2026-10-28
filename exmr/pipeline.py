@@ -30,6 +30,10 @@ from exmr.preprocessing.keypoints.mappings import COCO23, COCO63_LEFT_HAND, COCO
 
 log = logging.getLogger("exmr")
 
+# without snap_to_ground, a hint is logged when the feet are higher above the ground (m, median)
+# where they touch it, usually vertical drift of the world-frame motion in long videos
+FLOATING_FEET_HINT = 0.05
+
 
 @dataclass
 class Options:
@@ -313,15 +317,34 @@ def _run_model(data, options, fps, assets):
         smooth_global=options.smoothing != "none",
         fps=fps,
     )
+    from exmr.model.global_traj import foot_contacts
+
+    contact, foot_height = foot_contacts(
+        out["smplx_global"], out["static_conf_logits"], model.body_model
+    )
+    if not options.snap_to_ground:
+        _hint_floating_feet(foot_height[contact])
     del model
     _free_gpu_memory()
     return {
         "smplx_incam": {k: v[0].cpu() for k, v in out["smplx_incam"].items()},
         "smplx_global": {k: v[0].cpu() for k, v in out["smplx_global"].items()},
         "static_conf_logits": out["static_conf_logits"][0].cpu(),
+        "foot_contact": contact[0].cpu(),
         "K_fullimg": data["K_fullimg"],
         "bbx_xyxy": data["bbx_xyxy"],
     }
+
+
+def _hint_floating_feet(height):
+    """height: of the feet where they touch the ground (all frames, both feet)"""
+    if len(height) and height.median() > FLOATING_FEET_HINT:
+        log.warning(
+            f"In the world frame, the feet are {height.median() * 100:.0f} cm above the ground "
+            "(median) where they touch it, probably vertical drift. If the scene has a single "
+            "flat ground and nothing to stand on, snap_to_ground (demo: --snap_to_ground) keeps "
+            "the body on it"
+        )
 
 
 def save_results(results, output_dir):

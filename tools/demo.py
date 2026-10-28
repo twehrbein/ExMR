@@ -93,7 +93,8 @@ def main():
         help="assume a single flat ground and nothing to stand on (no stairs, chairs, ...): the "
         "body touches the ground at least every 0.5 s, so the world-frame motion is moved "
         "vertically to stay on the ground. Removes vertical drift (the person seems to fly or "
-        "sink) in long videos; jumps with a longer flight are pulled down.",
+        "sink) in long videos; jumps with a longer flight are pulled down. The demo suggests it "
+        "when the feet end up far above the ground.",
     )
     parser.add_argument(
         "--smoothing",

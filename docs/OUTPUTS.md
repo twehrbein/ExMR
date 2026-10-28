@@ -40,11 +40,12 @@ For a video with `L` frames:
 | Key | Shape | Description |
 |---|---|---|
 | `smplx_incam` | dict | SMPL-X parameters in the camera frame (x right, y down, z forward); not smoothed over time unless `--smoothing both` |
-| `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s); smoothed over time unless `--smoothing none` |
+| `smplx_global` | dict | SMPL-X parameters in a gravity-aligned world frame (y up); the motion starts at the origin (x, z) facing +z and stands on the ground y=0: the lowest mesh vertex over all frames is at y=0 (with `--snap_to_ground`: the lowest vertex within every 0.5 s); smoothed over time unless `--smoothing none` |
 | `joints_incam`, `joints_global` | <code>(L,&nbsp;76,&nbsp;3)</code> | 3D joints of `smplx_incam` and `smplx_global` in meters, see [joints](#joints) |
 | `joints_2d` | <code>(L,&nbsp;76,&nbsp;2)</code> | `joints_incam` projected into the image with `K_fullimg`, in pixels |
 | `joint_names` | 76 | names of the joints, e.g. `left_heel` |
-| `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (in contact) |
+| `static_conf_logits` | `(L, 6)` | logits of [left ankle, left foot, right ankle, right foot, left wrist, right wrist] being static (not moving in the world frame: usually, but not necessarily, in contact with the ground or an object) |
+| `foot_contact` | `(L, 2)` | whether the [left, right] foot touches the ground: its ankle or foot is static (`static_conf_logits` above 0.8 in probability) and it is the lowest part of the body (within 5 cm), e.g. to lock the feet when retargeting the motion to another character |
 | `K_fullimg` | <code>(L,&nbsp;3,&nbsp;3)</code> | camera intrinsics used (from `--f_mm`, else estimated from the image size) |
 | `bbx_xyxy` | `(L, 4)` | tracked bounding box of the person, `[x1, y1, x2, y2]` in pixels |
 | `fps` | float | frame rate of the processed video |

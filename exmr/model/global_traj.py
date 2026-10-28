@@ -1,5 +1,6 @@
 """World-frame trajectory: gravity-view rollout and static-joint post-processing (from GVHMR),
-and putting the motion on the ground, optionally snapped to a flat ground (as in PRIMAL)."""
+putting the motion on the ground, optionally snapped to a flat ground (as in PRIMAL), facing +z,
+and the feet's contacts with the ground."""
 
 import torch
 import torch.nn.functional as F
@@ -13,13 +14,18 @@ from exmr.geometry.rotation_conversions import (
 from exmr.geometry.smoothing import gaussian_smooth, moving_average_smooth
 from exmr.model.ik import CCDIK
 
-# joints with a static-contact prediction: [L_ankle, L_foot, R_ankle, R_foot, L_wrist, R_wrist]
+# joints with a static (not moving) prediction: [L_ankle, L_foot, R_ankle, R_foot, L_wrist, R_wrist]
 STATIC_JOINT_IDS = [7, 10, 8, 11, 20, 21]
 # snap_to_ground: some body part touches the ground at least this often (seconds), about the hang
 # time of a jump (as in PRIMAL, Zhang et al., arXiv 2503.17544)
 CONTACT_INTERVAL = 0.5
 # static_joint_ik: a toe's IK target stays this close (m, per axis) to the network's toe
 TOE_TARGET_MAX_OFFSET = 0.03
+# foot_contacts: a foot touches the ground where its ankle or toe is predicted static (not
+# moving) with at least STATIC_CONF and it is at most FOOT_CONTACT_HEIGHT (m) above the lowest
+# point of the body
+STATIC_CONF = 0.8
+FOOT_CONTACT_HEIGHT = 0.05
 # static_cam_transl: the world root may deviate this far (m) from the camera-frame root before
 # the slow part of the deviation (Gaussian smoothing, sigma in seconds) is removed
 CAMERA_DEAD_BAND = 0.25
@@ -150,17 +156,26 @@ def static_cam_transl(smplx_incam, smplx_global, static_conf_logits, decoder, fp
     return transl - drift
 
 
-def lowest_vertex_height(smplx_global, body_model, chunk_size=256):
-    """Height (y) of the lowest SMPL-X mesh vertex in every frame, (B, L).
+def lowest_vertex_height(smplx_global, body_model, vertex_sets=None, chunk_size=256):
+    """Height (y) of the lowest SMPL-X mesh vertex in every frame, (B, L); with vertex_sets (a
+    list of S vertex id tensors, e.g. the feet, or slice(None) for all vertices), of the lowest
+    vertex of each set, (B, L, S).
 
     The mesh is computed in chunks of frames: all of a long video's would take gigabytes.
     """
+
+    def lowest(height):  # (N, V) -> (N) or (N, S)
+        if vertex_sets is None:
+            return height.amin(dim=-1)
+        return torch.stack([height[:, ids].amin(dim=-1) for ids in vertex_sets], dim=-1)
+
     params = {k: v.flatten(0, 1) for k, v in smplx_global.items()}  # (B * L, D)
-    lowest = [
-        body_model(**{k: v[i : i + chunk_size] for k, v in params.items()})[..., 1].amin(dim=-1)
+    heights = [
+        lowest(body_model(**{k: v[i : i + chunk_size] for k, v in params.items()})[..., 1])
         for i in range(0, len(params["transl"]), chunk_size)
     ]
-    return torch.cat(lowest).view(smplx_global["transl"].shape[:2])
+    heights = torch.cat(heights)
+    return heights.view(*smplx_global["transl"].shape[:2], *heights.shape[1:])
 
 
 def put_on_ground(smplx_global, body_model):
@@ -191,6 +206,44 @@ def snap_to_ground(smplx_global, body_model, fps, interval=CONTACT_INTERVAL):
     transl = smplx_global["transl"].clone()
     transl[..., 1] -= ground
     return transl
+
+
+def face_forward(smplx_global, decoder):
+    """Rotate the motion about the vertical axis through the first frame's root so that the body
+    faces +z in the first frame (from its hips and shoulders), and move that root to x=z=0.
+    Returns the (B, L, 3) global orientation and translation."""
+    joints = decoder.fk(**{k: v[:, :1] for k, v in smplx_global.items()})[:, 0]  # (B, 22, 3)
+    left = joints[:, 1] - joints[:, 2] + joints[:, 16] - joints[:, 17]  # (B, 3) hips, shoulders
+    # the rotation about y that turns the left direction to +x (then the body faces +z)
+    yaw = torch.atan2(left[:, 2], left[:, 0])
+    yaw = torch.where(left[:, [0, 2]].norm(dim=-1) > 1e-4, yaw, torch.zeros_like(yaw))
+    zeros = torch.zeros_like(yaw)
+    R = axis_angle_to_matrix(torch.stack([zeros, yaw, zeros], dim=-1))  # (B, 3, 3)
+    global_orient = matrix_to_axis_angle(
+        R[:, None] @ axis_angle_to_matrix(smplx_global["global_orient"])
+    )
+    # SMPL-X rotates the body about its rest-pose pelvis J0: the root is at J0 + transl
+    J0 = decoder.skeleton(smplx_global["betas"])[..., 0, :]  # (B, L, 3)
+    root = smplx_global["transl"] + J0
+    start = root[:, :1] * root.new_tensor([1.0, 0.0, 1.0])  # the first root on the ground plane
+    transl = torch.einsum("bij,blj->bli", R, root - start) - J0
+    return global_orient, transl
+
+
+def foot_contacts(smplx_global, static_conf_logits, body_model):
+    """Where the feet touch the ground, (B, L, 2) bool [left, right], and the height of each
+    foot's lowest mesh vertex, (B, L, 2).
+
+    A foot touches the ground where its ankle or toe is predicted static (STATIC_CONF) and it is
+    the lowest part of the body (within FOOT_CONTACT_HEIGHT): not where a foot is held still in
+    the air, e.g. lying on the back with the legs up.
+    """
+    feet = [body_model.left_foot_vertices, body_model.right_foot_vertices]
+    heights = lowest_vertex_height(smplx_global, body_model, [*feet, slice(None)])  # (B, L, 3)
+    conf = static_conf_logits.sigmoid()  # (B, L, 6): [L_ankle, L_foot, R_ankle, R_foot, ...]
+    static = torch.stack([conf[..., :2].amax(dim=-1), conf[..., 2:4].amax(dim=-1)], dim=-1)
+    lowest = heights[..., 2:] + FOOT_CONTACT_HEIGHT
+    return (static > STATIC_CONF) & (heights[..., :2] <= lowest), heights[..., :2]
 
 
 def static_joint_ik(smplx_global, static_conf_logits, decoder):

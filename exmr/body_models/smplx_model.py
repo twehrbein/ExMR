@@ -53,6 +53,11 @@ class SmplxModel(nn.Module):
             for name, buffer in list(module.named_buffers(recurse=False)):
                 module.register_buffer(name, buffer, persistent=False)
         self.faces = torch.from_numpy(self.model.faces.astype("int64"))  # (20908, 3)
+        # the vertices of each foot: those that follow its ankle or toe joint the most
+        bone = self.model.lbs_weights.argmax(dim=-1)  # (10475,)
+        for side, joints in (("left", [7, 10]), ("right", [8, 11])):
+            ids = torch.isin(bone, torch.tensor(joints)).nonzero()[:, 0]
+            self.register_buffer(f"{side}_foot_vertices", ids, persistent=False)
 
     @property
     def J_regressor(self):

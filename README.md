@@ -106,7 +106,8 @@ Other options:
   seems to fly or sink). If the scene has a single flat ground and nothing to stand on (no
   stairs, chairs, ...), the body touches the ground at least every 0.5 s, about the hang time of
   a jump; this option moves the world-frame motion vertically so that it does, as in
-  [PRIMAL](https://arxiv.org/abs/2503.17544). Jumps with a longer flight are pulled down.
+  [PRIMAL](https://arxiv.org/abs/2503.17544). Jumps with a longer flight are pulled down. The
+  demo suggests this option when the feet end up far above the ground where they touch it.
 * `--smoothing {global,both,none}`: temporal smoothing of the output motion (Gaussian, ~33 ms).
   By default (`global`) only the world-frame motion is smoothed; the camera-frame motion stays
   raw, best aligned with the image. `both` also smooths the camera-frame motion (smoother, but

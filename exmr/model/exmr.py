@@ -114,8 +114,9 @@ class ExMR(nn.Module):
             dict with
               smplx_incam: SMPL-X parameters in the camera frame (each (B, L, D))
               smplx_global: SMPL-X parameters in the gravity-aligned world frame (y up, ground
-                  at y=0 with postprocess or snap_to_ground)
-              static_conf_logits: (B, L, 6) static-contact logits of
+                  at y=0 with postprocess or snap_to_ground; with postprocess, the motion starts
+                  at x=z=0 facing +z)
+              static_conf_logits: (B, L, 6) logits of being static (not moving) for
                   [L_ankle, L_foot, R_ankle, R_foot, L_wrist, R_wrist]
         """
         B, L = kp2d.shape[:2]
@@ -219,6 +220,11 @@ class ExMR(nn.Module):
         if postprocess and not snap_to_ground:
             # one shift for all frames, so last: puts the final mesh on the ground
             smplx_global["transl"] = global_traj.put_on_ground(smplx_global, self.body_model)
+        if postprocess:
+            # facing +z in the first frame, as BVH, Blender and Unity expect a character to start
+            smplx_global["global_orient"], smplx_global["transl"] = global_traj.face_forward(
+                smplx_global, self.decoder
+            )
 
         return {
             "smplx_incam": smplx_incam,
