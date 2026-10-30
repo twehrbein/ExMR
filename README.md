@@ -50,6 +50,8 @@ first: its weights are gated and access is approved manually, which can take a w
 
 To try ExMR without installing it, the [online demo](https://huggingface.co/spaces/twehrbein/ExMR)
 runs the default mode on up to 20 seconds of a video and returns the same outputs.
+On Windows, the community app [RGB MoCap](https://github.com/toyxyz/toyxyz_RGBMocap) runs ExMR with
+a graphical interface, contact editing and retargeting to Mixamo, VRM and MMD characters.
 
 Reconstruct the main person in a video:
 

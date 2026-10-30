@@ -5,7 +5,8 @@ about 8 GB of GPU memory (7.4 GB peak measured on a 1080x1920 video).
 
 **Windows:** not tested. Use [WSL2](https://learn.microsoft.com/windows/wsl/install) (Ubuntu, with
 the NVIDIA driver >= 570 installed in Windows) and follow these instructions inside it. Native
-Windows is not supported.
+Windows is not supported here. The community app [RGB MoCap](https://github.com/toyxyz/toyxyz_RGBMocap)
+runs ExMR natively on Windows, with its own installer and its own copy of ExMR.
 
 > [!IMPORTANT]
 > Request access to [SAM 3D Body](https://huggingface.co/facebook/sam-3d-body-dinov3) on Hugging Face
