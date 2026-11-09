@@ -184,7 +184,7 @@ class Downloader:
 
 
 def _open(url):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "exmr"}))
+    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "exmr"}), timeout=30)
 
 
 def _copy(src, dst, total, desc):
